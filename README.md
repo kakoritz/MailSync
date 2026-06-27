@@ -12,7 +12,7 @@ forwarding when migrating to a new email provider.
 - Connects to your Yahoo Mail account (IMAP + App Password)
 - Connects to your Microsoft Outlook 365 account (OAuth2 Device Code Flow)
 - Reads new emails from Yahoo, writes them to your Outlook Inbox
-- Runs automatically every hour in the background
+- Runs in the background with **IMAP IDLE push** — new mail triggers a sync within seconds, not an hour
 - Tracks the last synced email permanently — picks up exactly where it left off
 - Shows stats: total synced, today's count, health percentage, last sync time
 - Validates your stored credentials on every launch — alerts you before the first sync if credentials have gone stale
@@ -59,7 +59,7 @@ and sideload it to your device. See [DEPLOYMENT.md](DEPLOYMENT.md) for full inst
 |---|---|
 | Yahoo auth | IMAP + App Password — no developer account needed |
 | Microsoft auth | MSAL Device Code Flow — no redirect URI, no web server |
-| Sync mode | On-demand (SYNC NOW) + automatic background service (configurable interval) |
+| Sync mode | On-demand (SYNC NOW) + IMAP IDLE push (near-realtime) + interval fallback |
 | Sync tracking | UID-based, persistent — survives restarts and crashes |
 | Idempotent | Re-running never creates duplicates (Message-ID dedup; initial sync fast path) |
 | Stats | Total synced, today, since-date, pending estimate, health % (30-day) |
@@ -148,6 +148,7 @@ MailSync is a real solution to a real problem. It demonstrates:
 - Android background service integration from Python (Kivy service layer)
 - Clean six-layer architecture with enforced dependency direction
 - Idempotent sync design — safe to re-run at any point
-- 83+ unit tests covering all business logic with fully mocked external dependencies
+- 90+ unit tests covering all business logic with fully mocked external dependencies
 - Three-tier dedup strategy: initial skip → per-run cache → API query; eliminates virtually all redundant Graph API calls
-- Database migration infrastructure: new columns added safely to existing databases on upgrade
+- IMAP IDLE push via raw socket (RFC 2177) — new mail triggers sync within seconds
+- BOOT_COMPLETED BroadcastReceiver in Java — service restarts automatically after reboot

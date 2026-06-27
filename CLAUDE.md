@@ -60,6 +60,7 @@ sync/
   outlook_writer.py     POST RFC822 to Microsoft Graph API
   sync_engine.py        Orchestrates one sync pass; owns UID tracking + initial-sync fast path
   scheduler.py          Desktop threading scheduler (fires immediately then every interval)
+  imap_idle.py          RFC 2177 IMAP IDLE push monitor — fires callback on EXISTS notification
 ui/
   theme.py              All colors, font sizes, spacing — single source of truth
   screens/
@@ -85,6 +86,7 @@ tests/
   test_sync_engine.py
   test_scheduler.py
   test_credential_validator.py
+  test_imap_idle.py
 ```
 
 ## Dependency Rule

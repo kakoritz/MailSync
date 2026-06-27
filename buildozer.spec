@@ -6,7 +6,7 @@ source.dir      = .
 source.include_exts = py,json
 source.exclude_dirs = tests,.git,.claude,__pycache__,.venv
 
-version         = 0.4.0
+version         = 0.5.0
 
 requirements    = python3,kivy,requests,msal,cryptography
 
@@ -23,6 +23,10 @@ android.accept_sdk_license = True
 android.permissions = INTERNET,RECEIVE_BOOT_COMPLETED,FOREGROUND_SERVICE,WAKE_LOCK,POST_NOTIFICATIONS
 
 android.services = sync:service/sync_service.py
+
+# BOOT_COMPLETED auto-restart (requires buildozer >= 1.3)
+android.add_java_dir = src
+android.extra_manifest_xml = extras/boot_receiver.xml
 
 icon.filename    = %(source.dir)s/icon.png
 presplash        = %(source.dir)s/presplash.png

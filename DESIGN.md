@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.4.0
+**Version:** v0.5.0
 
 ---
 
@@ -212,10 +212,37 @@ android.services = sync:service/sync_service.py
 
 The service:
 1. Calls `database.init()` independently (separate SQLite connection)
-2. Loops every `SYNC_INTERVAL_SECONDS` (3600)
-3. Loads accounts from the database and calls `run_sync()`
-4. Posts an Android notification if new emails were synced
-5. Communicates the sync count to the UI via OSC on localhost
+2. Runs `run_sync()` immediately on every iteration
+3. Opens an IMAP IDLE connection and waits for EXISTS push notification
+4. Falls back to the configured sync interval if IDLE does not fire
+5. Posts an Android notification if new emails were synced
+
+### 7.1 IMAP IDLE (RFC 2177)
+
+Rather than polling every N minutes, the service uses IMAP IDLE to receive
+push notifications from Yahoo's server when new mail arrives:
+
+```
+Service → Yahoo IMAP: A001 IDLE\r\n
+Yahoo IMAP → Service: + idling\r\n
+... new message arrives ...
+Yahoo IMAP → Service: * 5 EXISTS\r\n
+Service → Yahoo IMAP: DONE\r\n
+Yahoo IMAP → Service: A001 OK IDLE terminated\r\n
+Service: run_sync() immediately
+```
+
+The IDLE connection is held in `sync/imap_idle.py` (`IdleMonitor`). A 25-minute
+keepalive (DONE + re-IDLE) prevents the server from closing the connection before
+the configured sync interval elapses. On any connection error, the monitor
+reconnects with exponential backoff.
+
+### 7.2 BOOT_COMPLETED
+
+`src/BootReceiver.java` is compiled into the APK and registered in
+`AndroidManifest.xml` via `extras/boot_receiver.xml`. After device reboot,
+Android dispatches `ACTION_BOOT_COMPLETED` to the receiver, which starts
+`PythonService` as a foreground service.
 
 The `FOREGROUND_SERVICE` permission keeps the process alive when the app is
 backgrounded. `RECEIVE_BOOT_COMPLETED` restarts the service after device reboot.

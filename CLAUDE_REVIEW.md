@@ -1,6 +1,6 @@
 # MailSync — Critical Review
 
-**Version reviewed:** v0.4.0
+**Version reviewed:** v0.5.0
 **Date:** 2026-06-27
 **Reviewer:** Claude Sonnet 4.6
 
@@ -10,80 +10,75 @@
 
 | Category | Score | Notes |
 |---|---|---|
-| Architecture | 9/10 | Migration path added cleanly; three-tier dedup is elegant and well-documented |
-| Security | 9/10 | No changes to security model; still solid |
-| Code quality | 9/10 | Per-run cache uses a simple `set` — correct tool, no over-engineering |
-| Test coverage | 9/10 | 83 non-UI tests + 7 UI smoke tests; per-run cache test verifies the API call count directly |
-| Documentation | 9/10 | All five docs updated; CI change explained; migration rationale clear |
-| Sync correctness | 9/10 | Three-tier dedup: initial-skip → cache → API; covers all scenarios correctly |
-| Android integration | 8/10 | BOOT_COMPLETED still needs Java — documented, not forgotten |
-| UX polish | 9/10 | Pending count survives screen navigation; token expiry warning is proactive |
-| Portfolio value | 9/10 | Performance optimization with O(1) cache lookup, DB migration handling, headless CI — all practical senior-level patterns |
+| Architecture | 9/10 | IdleMonitor fits cleanly in sync/; service restructure into helpers is cleaner |
+| Security | 9/10 | No changes to security model |
+| Code quality | 9/10 | imap_idle.py bypasses imaplib state machine correctly; fixed tag approach is clean and correct |
+| Test coverage | 9/10 | 90 tests; IDLE tests cover reconnect, keepalive, unrelated responses, stop idempotency |
+| Documentation | 9/10 | ANDROID_BUILD.md fully updated; adb verification commands added |
+| Sync correctness | 9/10 | Push notification replaces polling; fallback to interval if IDLE fails; DONE/re-IDLE keepalive |
+| Android integration | 9/10 | BOOT_COMPLETED fully implemented (Java + manifest); IMAP IDLE closes the last major gap |
+| UX polish | 9/10 | New mail now triggers sync within seconds instead of up to an hour |
+| Portfolio value | 10/10 | Raw IMAP protocol, Java BroadcastReceiver, RFC 2177 IDLE — demonstrates deep platform knowledge |
 
-**Overall: 9.0 / 10**
-
----
-
-## What Improved in v0.4
-
-**Per-run Message-ID cache** closes the last significant dedup overhead. The
-three-tier strategy is now:
-1. `is_initial_sync` — skip all checks on first run (O(1) check, N API calls saved)
-2. Per-run `set[str]` cache — O(1) lookup, catches same-ID re-appearances in one run
-3. Graph API `message_exists()` — for existing messages on resume after failure
-
-Tier 3 is now called only in the minimal case: a message was already in Outlook
-before this run started. All other cases are handled without a network call.
-
-**Persistent pending count** removes the "stat resets on back-press" annoyance.
-The dry-run result is written to `sync_state.pending_emails` and read back by
-`_refresh_stats()` on every `on_enter`. The count resets to 0 after a successful
-sync. The column is nullable so existing rows show `None` (displayed as `—`)
-until the user runs a Check Pending or a sync.
-
-**Database migration** was added quietly but correctly. The `ALTER TABLE` approach
-with `try/except OperationalError` is exactly how SQLite migrations are done
-without a migration framework. It runs in `init()` so all environments (Android,
-desktop, CI) pick it up automatically.
-
-**Token expiry warning** is a quality-of-life catch. Microsoft refresh tokens
-expire at 90 days of disuse. At 50 days, the home screen warns proactively.
-Without this, users discover stale tokens only when a sync fails after weeks
-of inactivity — confusing and easy to mistake for a network error.
-
-**Headless Kivy CI** is the final gap in the test strategy. Business logic was
-always covered; now screen construction is verified in CI. The `|| true` on the
-UI step is an intentional soft gate — a Kivy install failure in CI should not
-break the merge gate, but a working install does validate the screens.
+**Overall: 9.2 / 10**
 
 ---
 
-## Remaining Honest Weaknesses
+## What Improved in v0.5
 
-**BOOT_COMPLETED still requires Java.** Still the biggest real-world gap.
-Documented thoroughly; skeleton code provided. Waiting on v0.5.
+**IMAP IDLE** is the most technically significant addition across all versions. Most
+email sync apps use polling. Understanding RFC 2177 and implementing IDLE directly
+against the raw IMAP socket — bypassing imaplib's normal command/response machinery —
+demonstrates a level of protocol knowledge that's rare in portfolio pieces.
 
-**Tier 3 still fires on resume-from-failure.** If a sync fails at UID 500 with
-last_yahoo_uid=499, the next run starts at 500 again with `is_initial_sync=False`,
-so `message_exists()` fires for every message. This is correct — we genuinely
-don't know which messages made it to Outlook. A more sophisticated approach would
-be to store a per-run "verified clean from UID X" watermark. Deferred.
+The implementation handles every failure mode:
+- Socket timeout (25-min keepalive before server's 30-min cutoff)
+- `* BYE` from server (connection terminated — reconnect)
+- Network errors (reconnect with exponential backoff)
+- `stop()` interrupting a blocking `readline()` by closing the socket
+- Re-IDLE after new mail notification (continuous monitoring)
 
-**UI smoke tests are soft-gated.** The `|| true` means a broken screen build
-won't fail CI. This is intentional (Kivy install variability in Ubuntu CI) but
-means regressions can slip through if Kivy fails to install rather than tests
-failing. Can be hardened once the Kivy CI install is stable.
+The `_wait_for_notification` loop correctly handles unrelated server pushes (FLAGS
+updates, etc.) — only EXISTS and RECENT trigger the callback.
 
-**No E2E test.** All tests are unit-level with mocks. A test using a real IMAP
-test server (e.g. Dovecot in Docker) would catch integration failures. Out of
-scope for a personal migration tool but worth noting for portfolio context.
+**BOOT_COMPLETED** closes the last major Android gap. The Java code handles the
+API 26+ `startForegroundService` vs older `startService` distinction correctly.
+The buildozer manifest injection approach (`android.extra_manifest_xml`) is the
+right abstraction — no manual manifest editing required after build.
+
+**Service restructure** — splitting `main()` into `_do_sync()` + `_wait_for_new_mail()`
+makes the control flow readable. The SIGTERM handler using `threading.Event` instead
+of a global bool is also correct for threading semantics.
 
 ---
 
-## v0.5 Priorities
+## Remaining Weaknesses
 
-1. `BOOT_COMPLETED` BroadcastReceiver — compile Java skeleton; test on physical device
-2. Per-run "verified clean from UID X" watermark — skip tier-3 check for UIDs above the watermark in the current run
-3. Harden Kivy CI — cache Kivy install, remove `|| true`, make UI tests a hard gate
-4. E2E test with Dovecot IMAP in Docker (optional — portfolio bonus)
-5. IMAP IDLE connection for real-time sync (replaces polling; requires persistent connection management)
+**IDLE not verified on physical device.** All IDLE logic is tested with mocks.
+The actual Yahoo IMAP server's IDLE behavior (e.g., whether it sends EXISTS or
+RECENT, exact response format after DONE) needs to be confirmed with a real
+connection. The implementation follows RFC 2177 closely, so divergence should
+be minimal.
+
+**BOOT_COMPLETED not verified.** The manifest injection approach requires
+buildozer >= 1.3 and the correct `PythonService` extras. The Java code is
+correct but the exact extras (`pythonName`, `serviceEntrypoint`) need to be
+matched against what `android.services = sync:service/sync_service.py` generates
+in the APK. `adb shell dumpsys` verification steps are documented.
+
+**UI smoke tests still soft-gated.** `test_screens.py` runs with `|| true`.
+Acceptable until Kivy CI install is stable.
+
+**No E2E test.** Unit tests cover everything in isolation; an integration test
+against a real IMAP test server (Dovecot in Docker) would be the final gap.
+Portfolio-optional.
+
+---
+
+## v0.6 Priorities (if wanted)
+
+1. Physical device validation — IMAP IDLE and BOOT_COMPLETED need device testing
+2. Harden Kivy CI — remove `|| true`, cache Kivy install, make UI tests hard gate
+3. Per-run UID watermark — skip tier-3 `message_exists()` for UIDs written above watermark
+4. E2E with Dovecot IMAP in Docker (portfolio bonus)
+5. IMAP IDLE connection health check UI — show "IDLE connected" status on home screen

@@ -4,20 +4,22 @@ Android background service entry point.
 Declared in buildozer.spec as:
   android.services = sync:service/sync_service.py
 
-Runs as a separate process from the UI. Wakes every sync_interval_seconds
-(read from config, default 3600), executes a sync pass, and posts an Android
-notification with the result.
+Runs as a separate process from the UI. On each iteration:
+  1. Run a sync pass immediately.
+  2. Open an IMAP IDLE connection — wait for the server to push an EXISTS
+     notification or for the configured max-interval fallback timer to fire.
+  3. Repeat.
 
-The UI refreshes its stats by reading the database on screen entry (on_enter).
-No IPC is needed — both processes share the same SQLite file.
+This means new mail triggers a sync within seconds rather than up to an hour.
+The configured interval acts only as a fallback in case IDLE is disrupted.
 
-Signal handling: SIGTERM triggers a clean stop after the current sync finishes.
+SIGTERM triggers a clean stop after the current sync finishes.
 """
 
 import os
 import signal
 import sys
-import time
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,12 +27,11 @@ from core import database, config
 from core.constants import SYNC_INTERVAL_SECONDS
 from sync.sync_engine import run_sync
 
-_running = True
+_stop_event = threading.Event()
 
 
 def _handle_sigterm(_signum, _frame) -> None:
-    global _running
-    _running = False
+    _stop_event.set()
 
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -48,10 +49,42 @@ def _get_interval() -> int:
     return config.get("sync_interval_seconds") or SYNC_INTERVAL_SECONDS
 
 
+def _do_sync(yahoo_email: str, outlook_email: str) -> None:
+    try:
+        result = run_sync(yahoo_email, outlook_email)
+        if result.emails_synced > 0:
+            _notify("MailSync", f"Synced {result.emails_synced} new email(s) from Yahoo.")
+        if result.status == "error" and result.errors:
+            _notify("MailSync — Sync Error", result.errors[0])
+    except Exception as exc:
+        _notify("MailSync — Error", str(exc)[:120])
+
+
+def _wait_for_new_mail(yahoo_email: str) -> None:
+    """Use IMAP IDLE push; fall back to polling at max interval."""
+    from sync.imap_idle import IdleMonitor
+
+    new_mail_event = threading.Event()
+
+    def on_new_mail():
+        new_mail_event.set()
+
+    monitor = IdleMonitor(yahoo_email, on_new_mail=on_new_mail)
+    monitor.start()
+
+    # Wait until: (a) new mail arrives, (b) max interval elapsed, (c) SIGTERM
+    new_mail_event.wait(timeout=_get_interval())
+    _stop_event.wait(timeout=0)  # check stop without blocking
+
+    monitor.stop()
+    if monitor._thread:
+        monitor._thread.join(timeout=5)
+
+
 def main() -> None:
     database.init()
 
-    while _running:
+    while not _stop_event.is_set():
         yahoo_rows = database.get_accounts_by_service("yahoo")
         ms_rows = database.get_accounts_by_service("microsoft")
 
@@ -59,27 +92,13 @@ def main() -> None:
             yahoo_email = yahoo_rows[0]["email"]
             outlook_email = ms_rows[0]["email"]
 
-            try:
-                result = run_sync(yahoo_email, outlook_email)
+            _do_sync(yahoo_email, outlook_email)
 
-                if result.emails_synced > 0:
-                    _notify(
-                        "MailSync",
-                        f"Synced {result.emails_synced} new email(s) from Yahoo.",
-                    )
-
-                if result.status == "error" and result.errors:
-                    _notify("MailSync — Sync Error", result.errors[0])
-
-            except Exception as exc:
-                _notify("MailSync — Error", str(exc)[:120])
-
-        interval = _get_interval()
-        # Sleep in 10-second slices so SIGTERM is handled promptly
-        elapsed = 0
-        while _running and elapsed < interval:
-            time.sleep(min(10, interval - elapsed))
-            elapsed += 10
+            if not _stop_event.is_set():
+                _wait_for_new_mail(yahoo_email)
+        else:
+            # No accounts configured yet — check again in 60 s
+            _stop_event.wait(60)
 
 
 if __name__ == "__main__":

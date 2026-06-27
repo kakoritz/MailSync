@@ -2,6 +2,29 @@
 
 ---
 
+## v0.5.0 — 2026-06-27
+
+### Added
+
+- **IMAP IDLE push notification** (`sync/imap_idle.py`) — replaces polling with RFC 2177 IDLE. The service holds a persistent IMAP connection and receives an EXISTS notification from Yahoo's server within seconds of a new message arriving. Sync fires immediately instead of waiting up to the configured interval. Falls back to polling if IDLE drops.
+- **BOOT_COMPLETED auto-restart** — `src/BootReceiver.java` registered in `AndroidManifest.xml` via `extras/boot_receiver.xml` and `android.extra_manifest_xml`. After device reboot, the sync service restarts automatically without user interaction. Requires buildozer >= 1.3.
+- **25-minute IDLE keepalive** — before most servers' 30-minute idle cutoff, the monitor sends `DONE` + re-issues `IDLE` to reset the server timer. No spurious sync is triggered.
+- **Exponential backoff on IDLE reconnect** — 5 / 15 / 60 / 300 second delays between reconnect attempts on connection errors.
+- `src/BootReceiver.java` — full Java implementation with `startForegroundService` for Android 8+ and `startService` fallback for older APIs
+- `extras/boot_receiver.xml` — manifest `<receiver>` fragment injected by buildozer
+
+### Changed
+
+- `service/sync_service.py` — restructured into `_do_sync()` + `_wait_for_new_mail()` helpers; `_wait_for_new_mail` uses `IdleMonitor` with polling-interval timeout as fallback; `_stop_event` replaces the `_running` bool for cleaner threading
+- `buildozer.spec` — added `android.add_java_dir = src` and `android.extra_manifest_xml = extras/boot_receiver.xml`
+- `ANDROID_BUILD.md` — BOOT_COMPLETED section updated from "not yet implemented" to implemented; IMAP IDLE battery impact note added; `adb` verification commands provided
+
+### Tests
+
+- 90 tests (up from 83, excluding test_screens.py) — `tests/test_imap_idle.py` (7 tests): EXISTS fires callback, RECENT fires callback, unrelated responses ignored, socket timeout triggers re-IDLE, stop() exits cleanly, start() idempotent, BYE causes reconnect with zero-delay patch
+
+---
+
 ## v0.4.0 — 2026-06-27
 
 ### Added

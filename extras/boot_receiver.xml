@@ -1,0 +1,11 @@
+<!-- Injected into <application> section of AndroidManifest.xml via
+     buildozer.spec: android.extra_manifest_xml = extras/boot_receiver.xml
+     Requires buildozer >= 1.3 -->
+<receiver
+    android:name="org.kakoritz.mailsync.BootReceiver"
+    android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+    </intent-filter>
+</receiver>

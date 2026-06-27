@@ -108,48 +108,51 @@ refresh token path failed. Re-run the Device Code Flow via ConnectScreen.
 
 ---
 
-## BOOT_COMPLETED Auto-restart (Status: Not Yet Implemented)
+## BOOT_COMPLETED Auto-restart (Status: Implemented in v0.5)
 
-The `RECEIVE_BOOT_COMPLETED` permission is declared in `buildozer.spec` but
-does not yet restart the service automatically after a device reboot. Doing
-this purely from Python is not currently possible — it requires a Java
-`BroadcastReceiver` compiled into the APK.
+The `RECEIVE_BOOT_COMPLETED` permission is declared in `buildozer.spec`, and
+`src/BootReceiver.java` is compiled into the APK via `android.add_java_dir = src`.
+The manifest receiver registration is injected via `extras/boot_receiver.xml`
+and `android.extra_manifest_xml` (requires buildozer >= 1.3).
 
-### Why it requires Java
+### How it works
 
-Android dispatches the `BOOT_COMPLETED` intent before any Python runtime
-exists. You need a Java class registered in `AndroidManifest.xml` that starts
-the Kivy service when the intent fires. python-for-android does not generate
-this automatically.
+1. Device reboots
+2. Android dispatches `ACTION_BOOT_COMPLETED` to `BootReceiver.onReceive()`
+3. `BootReceiver` starts `PythonService` as a foreground service
+4. The Python service entry point (`service/sync_service.py`) starts normally
 
-### Implementation plan (v0.4)
+### Verify after build
 
-1. Create `src/BootReceiver.java`:
+```bash
+# After installing APK on a device:
+adb shell dumpsys package org.kakoritz.mailsync | grep receiver
+# Should show: org.kakoritz.mailsync.BootReceiver
 
-```java
-package org.kakoritz.mailsync;
-
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-
-public class BootReceiver extends BroadcastReceiver {
-    @Override
-    public void onReceive(Context ctx, Intent intent) {
-        if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
-            Intent svc = new Intent(ctx, org.kivy.android.PythonService.class);
-            svc.putExtra("androidPrivateStorage", ctx.getFilesDir().getAbsolutePath());
-            svc.putExtra("pythonName", "mailsync_sync");
-            ctx.startForegroundService(svc);
-        }
-    }
-}
+# Simulate boot broadcast (requires adb root or dev options):
+adb shell am broadcast -a android.intent.action.BOOT_COMPLETED \
+  -n org.kakoritz.mailsync/org.kakoritz.mailsync.BootReceiver
 ```
 
-2. Register it in `buildozer.spec` via `android.add_src = src/BootReceiver.java`
-   and patch `AndroidManifest.xml` with a custom `p4a` hook.
+### Known limitation
 
-3. Build and test on a physical device (emulators often suppress BOOT_COMPLETED).
+Physical device required for BOOT_COMPLETED testing — most Android emulators
+suppress or delay the boot broadcast. If the service does not start after a
+simulated broadcast, check `adb logcat -s MailSyncBoot` for the receiver output.
 
-Until v0.4, users must manually open the app after a reboot for background
-sync to resume.
+---
+
+## IMAP IDLE Push (v0.5)
+
+MailSync now uses IMAP IDLE (RFC 2177) instead of pure polling. The sync
+service opens a persistent IMAP connection and blocks until the Yahoo server
+pushes an EXISTS notification — typically within seconds of a message arriving.
+
+The configured sync interval (Settings screen) is still used as a **maximum
+wait time** (fallback poll). If the IDLE connection drops or the server does
+not push a notification, the service falls back to the interval timer.
+
+Battery impact: IMAP IDLE holds a TCP connection open but does not transmit
+data while idle. Combined with `FOREGROUND_SERVICE` + `WAKE_LOCK`, the device
+radio stays active but at much lower duty cycle than polling every hour (IMAP
+push avoids the cold-start radio wake on each poll cycle).
