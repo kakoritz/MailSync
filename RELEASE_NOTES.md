@@ -2,6 +2,30 @@
 
 ---
 
+## v0.4.0 — 2026-06-27
+
+### Added
+
+- **Per-run Message-ID cache** — within a single sync run, written Message-IDs are tracked in a `set[str]`. If the same Message-ID appears twice in the UID sequence, the second occurrence is deduped from the cache without making an additional Graph API call. Reported as `emails_cache_hit` on `SyncResult`.
+- **Persistent pending count** — `sync_state` now has a `pending_emails` column. After every dry-run, the count is written to the DB so the home screen shows the estimate on the next `on_enter` without re-running the check. After a full successful sync, the column is reset to 0.
+- **Database migration** — `init()` runs `ALTER TABLE sync_state ADD COLUMN pending_emails INTEGER` safely (skips if already exists).
+- **Token expiry warning** — if `last_sync_at` is more than 50 days ago, the home screen shows a warning that the Microsoft refresh token may have expired. Microsoft tokens expire at 90 days; 50-day threshold gives the user a window to re-authenticate proactively.
+- **Headless Kivy CI** — `ci.yml` now installs Kivy with `SDL_VIDEODRIVER=offscreen` and runs `tests/test_screens.py` (screen instantiation smoke tests). Business logic tests run first in a separate step; UI smoke tests are `|| true` so a Kivy install failure doesn't break the required CI gate.
+- `tests/test_screens.py` — 7 smoke tests verifying each screen builds and key widgets exist; validates `markup=True` fix and `BooleanProperty` fix are load-order correct
+
+### Changed
+
+- `sync_engine.run_sync()` — per-run cache logic inserted after the `is_initial_sync` check; idempotency layer now has three tiers: (1) initial sync skip, (2) per-run cache, (3) Graph API filter query
+- `home_screen._refresh_stats()` reads `pending_emails` from `sync_state` instead of always showing `—`
+- `home_screen._on_check_done()` delegates stat update to `_refresh_stats()` instead of setting the label directly
+- `database.init()` runs schema migrations in addition to `CREATE TABLE IF NOT EXISTS`
+
+### Tests
+
+- 83 tests (up from 78, excluding `test_screens.py`) — added: `test_per_run_cache_avoids_api_call`, `test_dry_run_persists_pending_count_in_db`, `test_pending_emails_default_is_none`, `test_update_pending_emails`, `test_update_pending_emails_to_zero`
+
+---
+
 ## v0.3.0 — 2026-06-27
 
 ### Added

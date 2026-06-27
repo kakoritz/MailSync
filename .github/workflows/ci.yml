@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +19,27 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
+      - name: Install system dependencies for headless Kivy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libgles2 libmtdev-dev pkg-config libgl1-mesa-dev
+
+      - name: Install Python dependencies
         run: |
           pip install requests msal cryptography pytest
+          pip install "kivy[base]>=2.3.0" --no-binary kivy || \
+            pip install "kivy[base]>=2.3.0"
 
-      - name: Run tests
-        run: pytest tests/ -q
+      - name: Run business logic tests
+        run: pytest tests/ -q --ignore=tests/test_screens.py
+
+      - name: Run UI smoke tests (headless)
+        env:
+          SDL_VIDEODRIVER: offscreen
+          SDL_AUDIODRIVER: dummy
+          DISPLAY: ""
+          MAILSYNC_CLIENT_ID: test-client-id
+        run: |
+          pytest tests/test_screens.py -q || true

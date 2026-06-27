@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.3.0
+**Version:** v0.4.0
 
 ---
 
@@ -147,8 +147,18 @@ exists via Graph API filter query. If it does, the UID is advanced without
 writing. This makes resuming a failed sync safe — no duplicate messages are
 created.
 
-The `emails_skipped` field on `SyncResult` records how many messages were
-deduped in a given run.
+The dedup strategy has three tiers:
+
+1. **Initial sync fast path** (`is_initial_sync`) — skip all existence checks
+   when `last_yahoo_uid == 0`. Outlook is guaranteed empty.
+2. **Per-run Message-ID cache** — a `set[str]` of Message-IDs written this run.
+   O(1) lookup; catches same-ID re-appearances within a single run without any
+   network call.
+3. **Graph API filter query** (`message_exists()`) — the fallback for messages
+   that might already exist in Outlook from a previous run.
+
+`SyncResult` tracks `emails_skipped` (tier 3 dedup) and `emails_cache_hit`
+(tier 2 cache) separately for observability.
 
 ### 5.3 Partial failure recovery
 
@@ -221,6 +231,7 @@ CREATE TABLE sync_state (
     yahoo_email     TEXT NOT NULL UNIQUE,
     outlook_email   TEXT NOT NULL,
     last_yahoo_uid  INTEGER NOT NULL DEFAULT 0,
+    pending_emails  INTEGER,   -- last dry-run count; NULL until first dry-run
     first_sync_at   TEXT,      -- set once, never updated
     last_sync_at    TEXT,
     created_at      TEXT NOT NULL

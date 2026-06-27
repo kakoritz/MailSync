@@ -239,3 +239,42 @@ def test_sync_counts_skipped_dedup_messages():
     mock_import.assert_not_called()
     assert result.emails_skipped == 2
     assert result.emails_synced == 0
+
+
+def test_per_run_cache_avoids_api_call_for_duplicate_message_id():
+    """Two UIDs with the same Message-ID: second one hits the cache, not the API."""
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    database.update_last_uid(YAHOO, 5)
+
+    # Both messages have same Message-ID (can happen in some IMAP edge cases)
+    same_rfc = _rfc822("same-id")
+    messages = [(6, same_rfc), (7, same_rfc)]
+
+    exists_calls = [0]
+    def mock_exists(*_):
+        exists_calls[0] += 1
+        return False
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
+         patch("sync.sync_engine.message_exists", side_effect=mock_exists), \
+         patch("sync.sync_engine.import_message", return_value="id"):
+        result = run_sync(YAHOO, OUTLOOK)
+
+    # First UID: message_exists called once, written, cached
+    # Second UID: cache hit — message_exists NOT called again
+    assert exists_calls[0] == 1
+    assert result.emails_synced == 1
+    assert result.emails_cache_hit == 1
+
+
+def test_dry_run_persists_pending_count_in_db():
+    """After a dry-run, pending_emails is written to sync_state."""
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    messages = [(1, _rfc822("1")), (2, _rfc822("2"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)):
+        result = run_sync(YAHOO, OUTLOOK, dry_run=True)
+
+    assert result.emails_would_sync == 2
+    state = database.get_sync_state(YAHOO)
+    assert state["pending_emails"] == 2

@@ -98,7 +98,7 @@ auth/                 Yahoo + Microsoft auth, encrypted token store
 sync/                 Yahoo reader, Outlook writer, sync engine, scheduler
 ui/                   Kivy screens and reusable widgets
 security/             Key derivation and Fernet encryption
-tests/                pytest test suite (78 tests, all network mocked)
+tests/                pytest suite (83 business-logic + 7 UI smoke tests)
 ```
 
 ---
@@ -148,5 +148,6 @@ MailSync is a real solution to a real problem. It demonstrates:
 - Android background service integration from Python (Kivy service layer)
 - Clean six-layer architecture with enforced dependency direction
 - Idempotent sync design — safe to re-run at any point
-- 78 unit tests covering all business logic with fully mocked external dependencies
-- Real-world performance optimization: initial sync fast path eliminates O(N) redundant API calls on first migration
+- 83+ unit tests covering all business logic with fully mocked external dependencies
+- Three-tier dedup strategy: initial skip → per-run cache → API query; eliminates virtually all redundant Graph API calls
+- Database migration infrastructure: new columns added safely to existing databases on upgrade

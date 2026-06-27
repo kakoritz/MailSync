@@ -13,7 +13,7 @@ Layout (top to bottom):
 """
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from kivy.uix.screenmanager import Screen
 from kivy.uix.boxlayout import BoxLayout
@@ -244,6 +244,28 @@ class HomeScreen(Screen):
 
         self.health_gauge.update(stats["health_pct"])
 
+        pending = state["pending_emails"]
+        if pending is None:
+            self.stat_pending.value = "—"
+        elif pending == 0:
+            self.stat_pending.value = "Up to date"
+        else:
+            self.stat_pending.value = str(pending)
+
+        # Warn if last sync was >50 days ago — Microsoft refresh tokens expire at 90 days
+        last = state["last_sync_at"]
+        if last:
+            try:
+                dt = datetime.fromisoformat(last)
+                if datetime.now(timezone.utc) - dt > timedelta(days=50):
+                    self._show_detail(
+                        "Last sync was over 50 days ago — Microsoft token may have expired. "
+                        "Re-connect your Microsoft account if sync fails.",
+                        color=theme.STATUS_WARN,
+                    )
+            except Exception:
+                pass
+
     # --- sync ---
 
     def _on_sync_pressed(self, *_) -> None:
@@ -318,7 +340,7 @@ class HomeScreen(Screen):
         self.check_btn.text = "Check Pending Emails"
         self.check_btn.disabled = False
         n = result.emails_would_sync
-        self.stat_pending.value = str(n) if n > 0 else "Up to date"
+        self._refresh_stats()  # reads pending_emails from DB (persisted by sync_engine)
         if n > 0:
             self._show_detail(
                 f"{n} email(s) pending — tap SYNC NOW to migrate.",

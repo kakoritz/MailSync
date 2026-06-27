@@ -118,3 +118,23 @@ def test_health_pct_with_errors():
 
     stats = database.get_sync_stats(state["id"])
     assert stats["health_pct"] == 50
+
+
+def test_pending_emails_default_is_none():
+    state = database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    assert state["pending_emails"] is None
+
+
+def test_update_pending_emails():
+    database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    database.update_pending_emails("a@yahoo.com", 42)
+    state = database.get_sync_state("a@yahoo.com")
+    assert state["pending_emails"] == 42
+
+
+def test_update_pending_emails_to_zero():
+    database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    database.update_pending_emails("a@yahoo.com", 10)
+    database.update_pending_emails("a@yahoo.com", 0)
+    state = database.get_sync_state("a@yahoo.com")
+    assert state["pending_emails"] == 0

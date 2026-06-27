@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     yahoo_email     TEXT NOT NULL UNIQUE,
     outlook_email   TEXT NOT NULL,
     last_yahoo_uid  INTEGER NOT NULL DEFAULT 0,
+    pending_emails  INTEGER,
     first_sync_at   TEXT,
     last_sync_at    TEXT,
     created_at      TEXT NOT NULL
@@ -35,6 +36,11 @@ CREATE TABLE IF NOT EXISTS sync_log (
     error_msg       TEXT
 );
 """
+
+# Migration: add pending_emails column to existing databases that don't have it
+_MIGRATIONS = [
+    "ALTER TABLE sync_state ADD COLUMN pending_emails INTEGER",
+]
 
 
 def _db_path() -> Path:
@@ -66,6 +72,12 @@ def init() -> None:
     _db_path().parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(_SCHEMA)
+        # Run migrations; silently skip if the column already exists
+        for stmt in _MIGRATIONS:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
 
 
 def _now() -> str:
@@ -133,6 +145,14 @@ def update_last_uid(yahoo_email: str, uid: int) -> None:
                    first_sync_at = COALESCE(first_sync_at, ?)
                WHERE yahoo_email = ?""",
             (uid, now, now, yahoo_email),
+        )
+
+
+def update_pending_emails(yahoo_email: str, count: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE sync_state SET pending_emails = ? WHERE yahoo_email = ?",
+            (count, yahoo_email),
         )
 
 
