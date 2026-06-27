@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.2.0
+**Version:** v0.3.0
 
 ---
 
@@ -134,12 +134,21 @@ successfully migrated message.
 Yahoo account from the app. This is by design — it is the migration checkpoint
 and must survive app restarts, crashes, and OS kills.
 
-### 5.2 Idempotency
+### 5.2 Idempotency and the Initial Sync Fast Path
 
-Before writing each message to Outlook, the engine checks whether a message
-with the same `Message-ID` header already exists via Graph API filter query.
-If it does, the UID is advanced without writing. This makes re-running a
-failed sync safe — no duplicate messages are created.
+When `last_yahoo_uid == 0` at the start of a run (i.e., the first ever sync),
+the Outlook mailbox is guaranteed empty — no messages have ever been written.
+The per-message `message_exists()` check is skipped entirely for this run,
+saving N Graph API calls on large inboxes.
+
+For all subsequent runs (`last_yahoo_uid > 0`), before writing each message
+the engine checks whether a message with the same `Message-ID` header already
+exists via Graph API filter query. If it does, the UID is advanced without
+writing. This makes resuming a failed sync safe — no duplicate messages are
+created.
+
+The `emails_skipped` field on `SyncResult` records how many messages were
+deduped in a given run.
 
 ### 5.3 Partial failure recovery
 
@@ -252,11 +261,13 @@ CREATE TABLE accounts (
 │  ● Outlook   user@ms.com     ✓ │
 ├─────────────────────────────────┤
 │         [ SYNC NOW ]            │
+│    [ Check Pending Emails ]     │
 ├─────────────────────────────────┤
 │  Syncing since     Jan 15, 2026 │
 │  Total synced          1,247    │
 │  Synced today             14    │
 │  Last sync          2 min ago   │
+│  Pending (est.)           12    │
 │  Health  ████████░░  82%        │
 ├─────────────────────────────────┤
 │  [ Open Outlook ↗ ]             │

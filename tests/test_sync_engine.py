@@ -44,7 +44,10 @@ def test_sync_advances_last_uid():
 
 
 def test_sync_skips_existing_messages():
+    # Seed a non-zero UID so is_initial_sync=False and message_exists is consulted
     database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    database.update_last_uid(YAHOO, 9)
+
     messages = [(10, _rfc822("10")), (11, _rfc822("11"))]
 
     with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
@@ -188,3 +191,51 @@ def test_dry_run_calls_progress_callback():
         run_sync(YAHOO, OUTLOOK, progress_cb=progress.append, dry_run=True)
 
     assert progress == [1, 2, 3]
+
+
+# --- initial sync optimization ---
+
+def test_initial_sync_skips_message_exists_check():
+    """When last_yahoo_uid is 0, message_exists must never be called."""
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    messages = [(1, _rfc822("1")), (2, _rfc822("2"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
+         patch("sync.sync_engine.message_exists") as mock_exists, \
+         patch("sync.sync_engine.import_message", return_value="id"):
+        result = run_sync(YAHOO, OUTLOOK)
+
+    mock_exists.assert_not_called()
+    assert result.emails_synced == 2
+
+
+def test_subsequent_sync_calls_message_exists():
+    """After at least one prior sync, message_exists is called for each message."""
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    database.update_last_uid(YAHOO, 5)  # non-zero → is_initial_sync=False
+
+    messages = [(6, _rfc822("6")), (7, _rfc822("7"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
+         patch("sync.sync_engine.message_exists", return_value=False) as mock_exists, \
+         patch("sync.sync_engine.import_message", return_value="id"):
+        run_sync(YAHOO, OUTLOOK)
+
+    assert mock_exists.call_count == 2
+
+
+def test_sync_counts_skipped_dedup_messages():
+    """Deduped messages are counted in emails_skipped, not emails_synced."""
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    database.update_last_uid(YAHOO, 5)  # non-zero → is_initial_sync=False
+
+    messages = [(6, _rfc822("6")), (7, _rfc822("7"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
+         patch("sync.sync_engine.message_exists", return_value=True), \
+         patch("sync.sync_engine.import_message") as mock_import:
+        result = run_sync(YAHOO, OUTLOOK)
+
+    mock_import.assert_not_called()
+    assert result.emails_skipped == 2
+    assert result.emails_synced == 0

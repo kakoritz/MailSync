@@ -5,6 +5,7 @@ On non-Android platforms the button is rendered but disabled.
 
 from kivy.uix.button import Button
 from kivy.lang import Builder
+from kivy.properties import BooleanProperty
 from kivy.utils import platform
 
 Builder.load_string("""
@@ -23,9 +24,11 @@ _OUTLOOK_PKG = "com.microsoft.office.outlook"
 
 
 class OpenOutlookButton(Button):
+    android_available = BooleanProperty(False)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.android_available = platform == "android"
+        self.android_available = (platform == "android")
         self.bind(on_release=self._launch)
 
     def _launch(self, *_) -> None:

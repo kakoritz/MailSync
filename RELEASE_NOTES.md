@@ -2,6 +2,35 @@
 
 ---
 
+## v0.3.0 — 2026-06-27
+
+### Added
+
+- **Startup credential validation** — on every home screen entry, background pings verify both Yahoo IMAP and Microsoft token validity; cards show `Auth failed` immediately if credentials have gone stale, with detail label showing the specific error
+- **Check Pending Emails button** — dry-run scan from the home screen shows how many emails are waiting to migrate before committing a full sync; result displayed in new "Pending (est.)" stat row
+- **Initial sync fast path** — when `last_yahoo_uid == 0` (first-ever sync), the per-message `message_exists()` Graph API check is skipped entirely; Outlook is guaranteed empty so no dedup check is needed; saves N API calls on initial migration of a large inbox
+- **`emails_skipped` counter** on `SyncResult` — tracks messages that were deduped and not re-imported
+- **Configurable sync interval** — Settings screen now offers 15 min / 30 min / 1 hour / 2 hours / 6 hours selector; saved via `core/config.py`; the Android service reads it on every wake cycle
+- **Disconnect confirmation popup** — Kivy `Popup` with cancel/confirm before deleting any credentials; MSAL cache entry is also cleared when disconnecting Microsoft
+- **Scheduler fires immediately on start()** — no more waiting a full interval before the first background sync
+- **SIGTERM handler in background service** — clean stop; 10-second sleep slices allow prompt response to OS kills
+- `requirements-dev.txt` — pytest moved out of `requirements.txt` into a dev-only file
+- `scripts/test.sh` and `scripts/build-apk.sh` — developer convenience scripts
+- `.env.example` — documents all required and optional environment variables
+- `auth/credential_validator.py` — new module with `ping_yahoo()` and `ping_microsoft()` functions
+
+### Fixed
+
+- `ui/widgets/open_outlook_btn.py` — `android_available` is now a proper Kivy `BooleanProperty` so KV bindings fire correctly when the value changes
+- `ui/screens/connect_screen.py` — `markup=True` is now set at widget creation time, not after the text assignment; prevents [b] tags from rendering as literal text on first display
+- `ui/screens/settings_screen.py` — moved to `ScrollView`-based layout; settings visible on small screens
+
+### Tests
+
+- 78 tests (up from 62) — new coverage: `test_credential_validator.py` (8 tests), `test_scheduler.py` (5 tests), `test_sync_engine.py` +3 (initial sync skip, subsequent sync calls exists, skipped counter); fixed 2 existing tests to seed non-zero UID where `is_initial_sync=False` is required
+
+---
+
 ## v0.2.0 — 2026-06-27
 
 ### Added

@@ -102,6 +102,7 @@ class ConnectScreen(Screen):
 
         self.ms_code_label = Label(
             text="",
+            markup=True,
             color=theme.TEXT_PRIMARY,
             font_size="14sp",
             size_hint_y=None, height="80dp",
@@ -185,10 +186,8 @@ class ConnectScreen(Screen):
     def _show_device_code(self, flow: dict) -> None:
         code = flow.get("user_code", "")
         url = flow.get("verification_uri", "aka.ms/devicelogin")
-        self.ms_code_label.text = (
-            f"Visit: [b]{url}[/b]\nEnter code: [b]{code}[/b]"
-        )
-        self.ms_code_label.markup = True
+        # markup=True is set at widget creation; assign text after so [b] tags render
+        self.ms_code_label.text = f"Visit: [b]{url}[/b]\nEnter code: [b]{code}[/b]"
         self.ms_status.text = "Waiting for sign-in..."
 
     def _ms_done(self, email: str) -> None:

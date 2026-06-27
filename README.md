@@ -15,6 +15,8 @@ forwarding when migrating to a new email provider.
 - Runs automatically every hour in the background
 - Tracks the last synced email permanently — picks up exactly where it left off
 - Shows stats: total synced, today's count, health percentage, last sync time
+- Validates your stored credentials on every launch — alerts you before the first sync if credentials have gone stale
+- Check Pending Emails (dry-run) shows how many emails are waiting before you commit a full sync
 - Lets you launch the Outlook app directly from within MailSync
 
 ---
@@ -57,10 +59,13 @@ and sideload it to your device. See [DEPLOYMENT.md](DEPLOYMENT.md) for full inst
 |---|---|
 | Yahoo auth | IMAP + App Password — no developer account needed |
 | Microsoft auth | MSAL Device Code Flow — no redirect URI, no web server |
-| Sync mode | On-demand (SYNC NOW) + automatic hourly background service |
+| Sync mode | On-demand (SYNC NOW) + automatic background service (configurable interval) |
 | Sync tracking | UID-based, persistent — survives restarts and crashes |
-| Idempotent | Re-running never creates duplicates (Message-ID dedup) |
-| Stats | Total synced, today, since-date, health % (30-day success rate) |
+| Idempotent | Re-running never creates duplicates (Message-ID dedup; initial sync fast path) |
+| Stats | Total synced, today, since-date, pending estimate, health % (30-day) |
+| Startup validation | Credentials pinged on every launch; stale creds surface immediately |
+| Check Pending | Dry-run count of waiting emails with no side effects |
+| Sync interval | Configurable: 15 min / 30 min / 1 hr / 2 hr / 6 hr from Settings |
 | Open Outlook | One tap to switch to the Outlook app |
 | Security | All credentials Fernet-encrypted with device-bound key derivation |
 | Notifications | Android notification when new emails are synced |
@@ -93,7 +98,7 @@ auth/                 Yahoo + Microsoft auth, encrypted token store
 sync/                 Yahoo reader, Outlook writer, sync engine, scheduler
 ui/                   Kivy screens and reusable widgets
 security/             Key derivation and Fernet encryption
-tests/                pytest test suite (40+ tests, all network mocked)
+tests/                pytest test suite (78 tests, all network mocked)
 ```
 
 ---
@@ -112,8 +117,10 @@ buildozer android debug
 ## Running Tests
 
 ```bash
-pip install requests msal cryptography pytest
+pip install -r requirements-dev.txt
 pytest tests/ -q
+# or use the convenience script:
+./scripts/test.sh
 ```
 
 ---
@@ -141,4 +148,5 @@ MailSync is a real solution to a real problem. It demonstrates:
 - Android background service integration from Python (Kivy service layer)
 - Clean six-layer architecture with enforced dependency direction
 - Idempotent sync design — safe to re-run at any point
-- 40+ unit tests covering all business logic with fully mocked external dependencies
+- 78 unit tests covering all business logic with fully mocked external dependencies
+- Real-world performance optimization: initial sync fast path eliminates O(N) redundant API calls on first migration

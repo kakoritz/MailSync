@@ -105,4 +105,51 @@ configured in `buildozer.spec` and `service/sync_service.py`.
 
 **401 from Graph API after a few days** — the access token expired and the
 refresh token path failed. Re-run the Device Code Flow via ConnectScreen.
-v0.2 will fix the MSAL token cache serialization to prevent this.
+
+---
+
+## BOOT_COMPLETED Auto-restart (Status: Not Yet Implemented)
+
+The `RECEIVE_BOOT_COMPLETED` permission is declared in `buildozer.spec` but
+does not yet restart the service automatically after a device reboot. Doing
+this purely from Python is not currently possible — it requires a Java
+`BroadcastReceiver` compiled into the APK.
+
+### Why it requires Java
+
+Android dispatches the `BOOT_COMPLETED` intent before any Python runtime
+exists. You need a Java class registered in `AndroidManifest.xml` that starts
+the Kivy service when the intent fires. python-for-android does not generate
+this automatically.
+
+### Implementation plan (v0.4)
+
+1. Create `src/BootReceiver.java`:
+
+```java
+package org.kakoritz.mailsync;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+public class BootReceiver extends BroadcastReceiver {
+    @Override
+    public void onReceive(Context ctx, Intent intent) {
+        if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+            Intent svc = new Intent(ctx, org.kivy.android.PythonService.class);
+            svc.putExtra("androidPrivateStorage", ctx.getFilesDir().getAbsolutePath());
+            svc.putExtra("pythonName", "mailsync_sync");
+            ctx.startForegroundService(svc);
+        }
+    }
+}
+```
+
+2. Register it in `buildozer.spec` via `android.add_src = src/BootReceiver.java`
+   and patch `AndroidManifest.xml` with a custom `p4a` hook.
+
+3. Build and test on a physical device (emulators often suppress BOOT_COMPLETED).
+
+Until v0.4, users must manually open the app after a reboot for background
+sync to resume.

@@ -1,6 +1,6 @@
 # MailSync — Critical Review
 
-**Version reviewed:** v0.2.0
+**Version reviewed:** v0.3.0
 **Date:** 2026-06-27
 **Reviewer:** Claude Sonnet 4.6
 
@@ -10,74 +10,78 @@
 
 | Category | Score | Notes |
 |---|---|---|
-| Architecture | 9/10 | Clean six-layer separation; dependency rule enforced throughout |
-| Security | 9/10 | Fernet + PBKDF2 is solid; MSAL cache now properly encrypted at rest |
-| Code quality | 9/10 | Dead code removed; single-responsibility modules; stdlib logging in non-UI modules |
-| Test coverage | 9/10 | 62 tests covering happy path, failure paths, backoff, idempotency, dry-run, EXPUNGE |
-| Documentation | 9/10 | DESIGN.md is thorough; all five docs maintained per protocol |
-| Sync correctness | 9/10 | UID tracking + idempotency + EXPUNGE safety + partial failure recovery all correct |
-| Android integration | 8/10 | Background service pattern is correct; notification API is best-effort |
-| Portfolio value | 9/10 | Real auth flows, real API, device crypto, Android service — demonstrates depth |
+| Architecture | 9/10 | Six-layer separation intact; `credential_validator.py` fits cleanly in `auth/`; dependency direction unbroken |
+| Security | 9/10 | Fernet + PBKDF2 + MSAL cache encryption all solid; disconnect now clears MSAL cache entry too |
+| Code quality | 9/10 | Lazy imports in `credential_validator.py` avoid circular imports elegantly; markup fix and BooleanProperty fix clean up two lingering rough edges |
+| Test coverage | 9/10 | 78 tests; new coverage for credential pings, scheduler first-run behavior, initial sync skip |
+| Documentation | 9/10 | All five docs updated; `ANDROID_BUILD.md` BOOT_COMPLETED section is honest about limitation and provides the Java skeleton for v0.4 |
+| Sync correctness | 9/10 | Initial sync fast path eliminates O(N) redundant API calls on first migration run; skipped counter makes dedup visible |
+| Android integration | 8/10 | Scheduler fires immediately; SIGTERM handled; BOOT_COMPLETED still needs Java (documented) |
+| UX polish | 9/10 | Startup ping, error detail label, Check Pending, disconnect confirm popup, configurable interval — dashboard is now genuinely useful |
+| Portfolio value | 9/10 | Real-world edge cases addressed (race conditions, token expiry, large inbox perf) — demonstrates thinking beyond the happy path |
 
 **Overall: 9.0 / 10**
 
 ---
 
-## What Improved in v0.2
+## What Improved in v0.3
 
-**MSAL token cache serialization** was the most important fix. Previously,
-`_build_app()` re-created the `PublicClientApplication` on every call with an
-empty in-memory cache, meaning `acquire_token_silent` always missed. Now,
-`SerializableTokenCache` is deserialized from the encrypted store, populated by
-the MSAL library, and re-serialized if it changed. Silent refresh now works
-correctly across process restarts (including the background service).
+**Startup credential validation** means the app immediately shows whether stored
+credentials are still valid — no more waiting until the user hits SYNC to discover
+a stale App Password or expired token. The ping runs in a background thread and
+updates the account cards' status dots within seconds of opening the home screen.
 
-**429/5xx backoff** means the first large sync (potentially thousands of emails)
-will no longer hard-fail when Graph API rate-limits the app. The Retry-After
-header is respected, and three retry slots cover most transient outages.
+**Initial sync fast path** addresses the most significant performance gap from
+v0.2: the per-message `message_exists()` call. On a first-ever sync with 10,000
+emails, v0.2 would make 10,000 Graph API filter queries before writing a single
+message. With `is_initial_sync`, that drops to 0. The dedup check is only active
+after at least one prior sync, which is the only scenario where duplicates could
+actually exist.
 
-**EXPUNGE safety** removes a latent bug where a Yahoo message deleted between
-SEARCH and FETCH would cause the entire sync run to abort. The NIL response is
-now logged and skipped, and the next UID continues normally.
+**Check Pending Emails (dry-run button)** transforms the home screen from a
+monitor into a diagnostic tool. Before triggering a full sync, the user can see
+exactly how many emails are waiting and confirm credentials are live — with zero
+side effects.
 
-**Dry-run mode** adds a safe way to verify credentials and count pending
-messages without touching Outlook or the sync state. Useful for the first-time
-setup flow and for debugging.
+**Scheduler fires immediately on `start()`** fixes a usability gap where a
+desktop dev session had to wait a full interval (3600s default) before seeing the
+first sync attempt. The new loop structure — fire, then wait — is also cleaner
+than the previous wait-then-fire pattern.
 
-**Dead code removal** in `outlook_writer.py` cleaned up an embarrassing leftover
-from the first draft: an unreachable `import json`, two unused `payload` dicts,
-and an unused `mime_b64` encoding. The actual implementation was correct; the
-dead code was just noise from incomplete editing.
+**Disconnect confirmation popup** prevents an accidental tap from irreversibly
+deleting the sync state and all credentials. The popup also clears the MSAL cache
+entry (the `:msal_cache` token store key) on Microsoft disconnect, which v0.2
+silently left behind.
 
 ---
 
 ## Remaining Honest Weaknesses
 
-**No rate limiting on the idempotency check.** `message_exists()` makes a Graph
-API call per message before writing. For a first run with 10,000 emails, that's
-10,000 additional API calls. The mitigation for v0.3: cache seen Message-IDs in
-memory within a single run, or skip the check for UIDs below a watermark.
+**BOOT_COMPLETED still requires Java.** Documented thoroughly in `ANDROID_BUILD.md`
+with a skeleton implementation and build instructions. Cannot be done from Python.
+Targeted for v0.4.
 
-**Kivy UI is still not tested in CI.** Headless Kivy in GitHub Actions is
-achievable (SDL_VIDEODRIVER=dummy works with pygame; Kivy needs more setup) but
-hasn't been configured. All business logic is tested; UI regressions require
-manual device testing.
+**Headless Kivy CI.** All business logic is tested. UI screen-level tests require
+`SDL_VIDEODRIVER=dummy` and Kivy installed in the CI environment, which adds
+significant build time. Deferred to v0.4 — the risk of UI regressions is accepted
+since all state logic is covered in non-UI tests.
 
-**Background service restart on boot is declared but unverified.** The
-`RECEIVE_BOOT_COMPLETED` permission is in `buildozer.spec`, but the
-`BroadcastReceiver` registration that would actually restart the service after
-reboot hasn't been wired. This is a `v0.3` item.
+**In-run Message-ID cache not fully realized.** `is_initial_sync` eliminates the
+check on first-ever sync, but resuming from a failed partial sync (last_yahoo_uid
+> 0, some messages already in Outlook) still calls `message_exists()` per message.
+A per-run `set()` of written Message-IDs would eliminate even those calls — targeted
+for v0.4.
 
-**App Password isn't validated at launch.** If the user changes their Yahoo App
-Password without updating it in the app, the first sync run will fail with an
-auth error rather than the app catching it at startup and prompting.
+**`stat_pending` value resets on screen exit.** The "Pending (est.)" stat row is
+only populated by the Check Pending button; it is not persisted anywhere. On the
+next `on_enter()`, it shows "—". Acceptable behavior for now.
 
 ---
 
-## v0.3 Priorities
+## v0.4 Priorities
 
-1. In-run Message-ID cache to eliminate per-message idempotency API calls
-2. Wire `BOOT_COMPLETED` BroadcastReceiver for true background service restart
-3. App startup validation of stored credentials (ping both services)
-4. Headless Kivy CI testing for UI screens
-5. Configurable sync interval in Settings screen
+1. `BOOT_COMPLETED` BroadcastReceiver — compile Java skeleton into APK; test on physical device
+2. Per-run Message-ID `set()` cache — skip `message_exists()` for every UID written in the current run
+3. Headless Kivy CI — `SDL_VIDEODRIVER=dummy`, Kivy install cached, screen-level smoke tests
+4. Persist `pending_count` in `sync_state` — populated by dry-run, shown on next `on_enter()`
+5. Token expiry warning — if `last_sync_at` is > 50 days ago, warn that refresh token may have expired
