@@ -68,45 +68,86 @@ def test_validate_credentials_connection_failure():
             validate_credentials("user@yahoo.com", "pw")
 
 
-# --- microsoft_auth ---
+# --- microsoft_auth: get_access_token with SerializableTokenCache ---
+
+def _fake_token_json():
+    return json.dumps({"access_token": "old", "refresh_token": "rtoken"})
+
 
 def test_get_access_token_uses_silent_flow():
-    fake_token = {"access_token": "fresh_token", "refresh_token": "rtoken"}
-    token_json = json.dumps(fake_token)
     database.init()
-    token_store.save_microsoft_token("user@outlook.com", token_json)
+    token_store.save_microsoft_token("user@outlook.com", _fake_token_json())
 
+    mock_cache = MagicMock()
+    mock_cache.has_state_changed = False
     mock_app = MagicMock()
     mock_app.get_accounts.return_value = [MagicMock()]
     mock_app.acquire_token_silent.return_value = {"access_token": "silent_token"}
 
-    with patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
+    with patch("auth.microsoft_auth.msal.SerializableTokenCache", return_value=mock_cache), \
+         patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
         token = get_access_token("user@outlook.com")
+
     assert token == "silent_token"
 
 
 def test_get_access_token_falls_back_to_refresh():
-    fake_token = {"access_token": "old", "refresh_token": "rtoken"}
     database.init()
-    token_store.save_microsoft_token("user@outlook.com", json.dumps(fake_token))
+    token_store.save_microsoft_token("user@outlook.com", _fake_token_json())
 
+    mock_cache = MagicMock()
+    mock_cache.has_state_changed = False
     mock_app = MagicMock()
     mock_app.get_accounts.return_value = []
     mock_app.acquire_token_by_refresh_token.return_value = {"access_token": "refreshed"}
 
-    with patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
+    with patch("auth.microsoft_auth.msal.SerializableTokenCache", return_value=mock_cache), \
+         patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
         token = get_access_token("user@outlook.com")
+
     assert token == "refreshed"
 
 
 def test_get_access_token_raises_when_all_fail():
     database.init()
-    token_store.save_microsoft_token("user@outlook.com", json.dumps({"access_token": "x"}))
+    token_store.save_microsoft_token("user@outlook.com", _fake_token_json())
 
+    mock_cache = MagicMock()
+    mock_cache.has_state_changed = False
     mock_app = MagicMock()
     mock_app.get_accounts.return_value = []
     mock_app.acquire_token_by_refresh_token.return_value = {"error": "invalid_grant"}
 
-    with patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
+    with patch("auth.microsoft_auth.msal.SerializableTokenCache", return_value=mock_cache), \
+         patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
         with pytest.raises(RuntimeError, match="Re-authentication"):
             get_access_token("user@outlook.com")
+
+
+def test_get_access_token_saves_cache_on_state_change():
+    database.init()
+    token_store.save_microsoft_token("user@outlook.com", _fake_token_json())
+
+    mock_cache = MagicMock()
+    mock_cache.has_state_changed = True
+    mock_cache.serialize.return_value = '{"tokens": "fresh"}'
+    mock_app = MagicMock()
+    mock_app.get_accounts.return_value = [MagicMock()]
+    mock_app.acquire_token_silent.return_value = {"access_token": "new_token"}
+
+    with patch("auth.microsoft_auth.msal.SerializableTokenCache", return_value=mock_cache), \
+         patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
+        get_access_token("user@outlook.com")
+
+    mock_cache.serialize.assert_called()
+
+
+def test_initiate_device_flow_raises_on_error():
+    mock_app = MagicMock()
+    mock_app.initiate_device_flow.return_value = {
+        "error": "bad_request",
+        "error_description": "Client not found",
+    }
+    with patch("auth.microsoft_auth.msal.PublicClientApplication", return_value=mock_app):
+        with pytest.raises(RuntimeError, match="Device flow error"):
+            initiate_device_flow()

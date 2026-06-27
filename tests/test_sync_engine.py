@@ -147,3 +147,44 @@ def test_sync_is_idempotent_on_rerun():
 
     mock_import.assert_not_called()
     assert result.emails_synced == 0
+
+
+# --- dry_run ---
+
+def test_dry_run_does_not_write_or_update_db():
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    messages = [(10, _rfc822("10")), (11, _rfc822("11"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)), \
+         patch("sync.sync_engine.import_message") as mock_import:
+        result = run_sync(YAHOO, OUTLOOK, dry_run=True)
+
+    mock_import.assert_not_called()
+    assert result.dry_run is True
+    assert result.emails_would_sync == 2
+    assert result.emails_synced == 0
+
+    state = database.get_sync_state(YAHOO)
+    assert state["last_yahoo_uid"] == 0
+
+
+def test_dry_run_does_not_write_log_entry():
+    state = database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    messages = [(10, _rfc822("10"))]
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)):
+        run_sync(YAHOO, OUTLOOK, dry_run=True)
+
+    stats = database.get_sync_stats(state["id"])
+    assert stats["total_synced"] == 0
+
+
+def test_dry_run_calls_progress_callback():
+    database.get_or_create_sync_state(YAHOO, OUTLOOK)
+    messages = [(10, _rfc822("10")), (11, _rfc822("11")), (12, _rfc822("12"))]
+    progress = []
+
+    with patch("sync.sync_engine.iter_new_messages", return_value=iter(messages)):
+        run_sync(YAHOO, OUTLOOK, progress_cb=progress.append, dry_run=True)
+
+    assert progress == [1, 2, 3]

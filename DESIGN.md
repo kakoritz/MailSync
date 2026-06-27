@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.1.0
+**Version:** v0.2.0
 
 ---
 

@@ -6,7 +6,7 @@ source.dir      = .
 source.include_exts = py,json
 source.exclude_dirs = tests,.git,.claude,__pycache__,.venv
 
-version         = 0.1.0
+version         = 0.2.0
 
 requirements    = python3,kivy,requests,msal,cryptography
 

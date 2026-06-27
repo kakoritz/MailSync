@@ -6,7 +6,7 @@ GRAPH_SCOPES = ["Mail.ReadWrite", "offline_access"]
 
 SYNC_INTERVAL_SECONDS = 3600
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 APP_NAME = "MailSync"
 
 DB_FILENAME = "mailsync.db"

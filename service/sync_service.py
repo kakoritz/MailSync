@@ -4,36 +4,28 @@ Android background service entry point.
 Declared in buildozer.spec as:
   android.services = sync:service/sync_service.py
 
-Runs independently of the UI process. Wakes every SYNC_INTERVAL_SECONDS,
-runs a sync pass, and posts a notification with the result.
+Runs as a separate process from the UI. Wakes every SYNC_INTERVAL_SECONDS,
+executes a sync pass, and posts an Android notification with the result.
 
-Communication back to the UI is via OSC on localhost.
+The UI refreshes its stats by reading the database on screen entry (on_enter).
+No IPC is needed — both processes share the same SQLite file.
 """
 
-import time
 import os
 import sys
+import time
 
-# Ensure the project root is on the path so core/sync/auth imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import database
-from core.constants import SYNC_INTERVAL_SECONDS, OSC_HOST, OSC_PORT_UI
+from core.constants import SYNC_INTERVAL_SECONDS
 from sync.sync_engine import run_sync
 
 
-def _post_notification(title: str, message: str) -> None:
+def _notify(title: str, message: str) -> None:
     try:
         from android.notifications import notify
         notify(title, message)
-    except Exception:
-        pass
-
-
-def _notify_ui(emails_synced: int) -> None:
-    try:
-        from kivy.lib.osc import oscAPI
-        oscAPI.sendMsg("/sync_done", [emails_synced], host=OSC_HOST, port=OSC_PORT_UI)
     except Exception:
         pass
 
@@ -53,20 +45,16 @@ def main() -> None:
                 result = run_sync(yahoo_email, outlook_email)
 
                 if result.emails_synced > 0:
-                    _post_notification(
+                    _notify(
                         "MailSync",
                         f"Synced {result.emails_synced} new email(s) from Yahoo.",
                     )
-                    _notify_ui(result.emails_synced)
 
-                if result.status == "error":
-                    _post_notification(
-                        "MailSync — Sync Error",
-                        result.errors[0] if result.errors else "Unknown error",
-                    )
+                if result.status == "error" and result.errors:
+                    _notify("MailSync — Sync Error", result.errors[0])
 
             except Exception as exc:
-                _post_notification("MailSync — Error", str(exc))
+                _notify("MailSync — Error", str(exc)[:120])
 
         time.sleep(SYNC_INTERVAL_SECONDS)
 

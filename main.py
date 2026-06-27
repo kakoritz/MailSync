@@ -34,9 +34,7 @@ class MailSyncApp(App):
     def _start_background_service(self) -> None:
         try:
             from android import mActivity
-            from android.broadcast import BroadcastReceiver
             from jnius import autoclass
-
             Service = autoclass("org.kivy.android.PythonService")
             Service.start(mActivity, "MailSync background sync")
         except Exception as exc:
