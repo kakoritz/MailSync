@@ -2,7 +2,7 @@
 
 ---
 
-## v0.6.0 — 2026-06-27
+## v0.6.0 — 2026-06-28
 
 ### Added
 
@@ -32,6 +32,12 @@
 - New: `tests/test_notification_helper.py` (7 tests) — no-op on non-Android, channel creation + notification posting + foreground start with mocked JNI
 - New: `tests/test_database.py` +5 — `idle_last_seen` default None, `update_idle_last_seen`, `get_sync_stats_by_day` empty / accumulate / excludes errors
 - New: `tests/e2e/test_yahoo_imap_e2e.py` (6 e2e tests), `tests/e2e/test_idle_e2e.py` (3 e2e tests)
+
+### Fixed (post-release CI)
+
+- `tests/test_screens.py` — `gauge.gauge_color` comparison now uses `tuple()` cast; Kivy's `ColorProperty` stores values as lists, not tuples — was failing the hard-gated `test-ui` job
+- `ci.yml` — `docker-compose` (v1 standalone binary) replaced with `docker compose` (v2 plugin); ubuntu-22.04 runners only ship v2
+- `ci.yml` — `replace_all` on command name corrupted filename `docker-compose.test.yml` → `docker compose.test.yml`; filename restored; all three CI jobs (`test-logic`, `test-e2e`, `test-ui`) green
 
 ---
 

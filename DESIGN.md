@@ -354,7 +354,7 @@ test-logic  (fast, ~2 min)
   └── installs: requests msal cryptography pytest
   └── runs: pytest tests/ -q --ignore=tests/test_screens.py
 
-test-e2e    (requires Docker service: dovecot/dovecot:latest on port 143)
+test-e2e    (starts dovecot/dovecot:latest via docker compose in a step after checkout)
   └── needs: test-logic
   └── runs: pytest tests/e2e/ -m e2e -q
 
@@ -385,6 +385,14 @@ tests/e2e/
 E2E tests patch `auth.yahoo_auth.connect` to return a plain `IMAP4` connection
 to `localhost:143` instead of an SSL connection to Yahoo's servers. The IMAP
 protocol logic being tested is identical either way.
+
+Skip behaviour: if `localhost:143` is not reachable, all 9 e2e tests skip
+automatically. The unit test run (102 tests) is unaffected.
+
+**CI note:** the `test-e2e` job uses `docker compose` (Compose V2 plugin, not the
+standalone `docker-compose` v1 binary which is absent from ubuntu-22.04 runners).
+The server starts in a step *after* `actions/checkout` so the config volume files
+at `tests/e2e/dovecot/` are available before Dovecot starts.
 
 Skip behaviour: if `localhost:143` is not reachable, all 9 e2e tests skip
 automatically. The unit test run (102 tests) is unaffected.

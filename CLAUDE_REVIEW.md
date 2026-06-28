@@ -69,10 +69,9 @@ caveat still applies. The notification channel code is correct by API spec but
 needs device verification to confirm `startForeground` is called within the 5s
 window and that the persistent notification appears in the status bar.
 
-**E2E tests not verified end-to-end in CI yet.** The Dovecot Docker config
-(`docker-compose.test.yml`) is written and the CI job is defined, but the
-`dovecot/dovecot:latest` image needs to be confirmed accessible and the config
-volume mount verified in a real CI run. The skip guard provides a safety net.
+**E2E tests verified green in CI.** The `test-e2e` job runs against `dovecot/dovecot:latest`
+via `docker compose` (Compose V2) in a step after checkout. All 9 E2E tests pass in GitHub
+Actions. The three-job CI split (`test-logic` / `test-e2e` / `test-ui`) is fully green.
 
 **`idle_last_seen` is only written when IDLE fires.** On desktop (no background
 service), `idle_last_seen` stays NULL and the home screen always shows "Polling".
