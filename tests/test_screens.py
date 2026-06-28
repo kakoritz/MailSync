@@ -94,11 +94,11 @@ def test_health_gauge_update(app):
     gauge.update(100)
     assert gauge.health_pct == 100
     gauge.update(50)
-    assert gauge.gauge_color == theme.STATUS_ERROR
+    assert tuple(gauge.gauge_color) == theme.STATUS_ERROR
     gauge.update(75)
-    assert gauge.gauge_color == theme.STATUS_WARN
+    assert tuple(gauge.gauge_color) == theme.STATUS_WARN
     gauge.update(95)
-    assert gauge.gauge_color == theme.STATUS_OK
+    assert tuple(gauge.gauge_color) == theme.STATUS_OK
 
 
 def test_open_outlook_btn_non_android(app):

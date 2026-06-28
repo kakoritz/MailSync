@@ -37,19 +37,6 @@ jobs:
     timeout-minutes: 10
     needs: test-logic
 
-    services:
-      imap:
-        image: dovecot/dovecot:latest
-        ports:
-          - 143:143
-        volumes:
-          - ${{ github.workspace }}/tests/e2e/dovecot:/etc/dovecot/conf.d
-        options: >-
-          --health-cmd "nc -z localhost 143"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
 
@@ -68,8 +55,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests msal cryptography pytest
 
-      - name: Wait for IMAP server
+      - name: Start Dovecot IMAP server
         run: |
+          docker-compose -f docker-compose.test.yml up -d
           for i in $(seq 1 20); do
             nc -z localhost 143 && echo "IMAP ready" && break
             sleep 2
@@ -79,6 +67,10 @@ jobs:
         env:
           MAILSYNC_CLIENT_ID: test-client-id
         run: pytest tests/e2e/ -m e2e -q
+
+      - name: Stop Dovecot
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down
 
   test-ui:
     runs-on: ubuntu-22.04
