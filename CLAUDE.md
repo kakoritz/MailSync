@@ -42,7 +42,8 @@ Version format: `v0.MAJOR.MINOR` — bump MINOR for any visible change.
 ```
 main.py                 App bootstrap + ScreenManager
 service/
-  sync_service.py       Android background service (hourly sync)
+  sync_service.py           Android background service (IDLE push + interval fallback)
+  notification_helper.py    Android 8+ notification channels + foreground service notification
 core/
   constants.py          App-wide constants — no logic
   config.py             JSON settings persistence
@@ -51,27 +52,33 @@ core/
 security/
   crypto.py             Fernet key derivation + encrypt/decrypt
 auth/
-  yahoo_auth.py         IMAP connect + validate credentials
-  microsoft_auth.py     MSAL Device Code Flow + token refresh
-  token_store.py        Encrypted credential read/write via database
+  yahoo_auth.py              IMAP connect + validate credentials
+  microsoft_auth.py          MSAL Device Code Flow + token refresh
+  token_store.py             Encrypted credential read/write via database
+  credential_validator.py    Lightweight startup ping for both services
 sync/
   yahoo_reader.py       Fetch messages from Yahoo IMAP by UID
   outlook_writer.py     POST RFC822 to Microsoft Graph API
-  sync_engine.py        Orchestrates one sync pass; owns UID tracking
-  scheduler.py          Desktop threading scheduler (Android uses service)
+  sync_engine.py        Orchestrates one sync pass; owns UID tracking + initial-sync fast path
+  scheduler.py          Desktop threading scheduler (fires immediately then every interval)
+  imap_idle.py          RFC 2177 IMAP IDLE push monitor — fires callback on EXISTS notification
 ui/
   theme.py              All colors, font sizes, spacing — single source of truth
   screens/
-    home_screen.py      Dashboard: account cards, SYNC button, stats
-    connect_screen.py   Yahoo + Microsoft connection flows
+    home_screen.py      Dashboard: account cards, SYNC + Check Pending, stats, reconnect btns
+    connect_screen.py   Yahoo + Microsoft connection flows; adapts for re-auth
     history_screen.py   Sync log table
-    settings_screen.py  Disconnect accounts, nav to history
+    settings_screen.py  Disconnect (with confirm popup), configurable interval, history nav
   widgets/
     account_card.py     Reusable account status card
     sync_button.py      Animated SYNC NOW button
     stat_row.py         Label + value row for stats panel
     health_gauge.py     Progress bar health indicator
-    open_outlook_btn.py Android Intent launcher for Outlook app
+    history_chart.py    7-day sync bar chart (Kivy canvas)
+    open_outlook_btn.py Android Intent launcher (BooleanProperty android_available)
+scripts/
+  test.sh               Run pytest
+  build-apk.sh          Run buildozer android debug
 tests/
   test_crypto.py
   test_database.py
@@ -79,6 +86,14 @@ tests/
   test_yahoo_reader.py
   test_outlook_writer.py
   test_sync_engine.py
+  test_scheduler.py
+  test_credential_validator.py
+  test_imap_idle.py
+  test_notification_helper.py
+  e2e/
+    conftest.py              e2e marker + Dovecot skip guard
+    test_yahoo_imap_e2e.py   real IMAP CRUD against Dovecot
+    test_idle_e2e.py         IDLE callback fires on APPEND
 ```
 
 ## Dependency Rule
@@ -87,15 +102,17 @@ tests/
 constants.py      → nothing
 database.py       → constants
 crypto.py         → nothing (stdlib + cryptography)
-token_store.py    → database, crypto
-yahoo_auth.py     → token_store, constants
-microsoft_auth.py → token_store, constants
-yahoo_reader.py   → yahoo_auth
-outlook_writer.py → microsoft_auth, constants
-sync_engine.py    → yahoo_reader, outlook_writer, database
-scheduler.py      → constants (no sync imports at module level)
-ui/               → core, sync, auth (never the reverse)
-main.py           → everything
+token_store.py              → database, crypto
+yahoo_auth.py               → token_store, constants
+microsoft_auth.py           → token_store, constants
+credential_validator.py     → token_store, yahoo_auth, microsoft_auth (lazy imports to avoid circular)
+yahoo_reader.py             → yahoo_auth
+outlook_writer.py           → microsoft_auth, constants
+sync_engine.py              → yahoo_reader, outlook_writer, database
+scheduler.py                → constants (no sync imports at module level)
+notification_helper.py      → nothing (android/jnius are runtime-optional try/except)
+ui/                         → core, sync, auth (never the reverse)
+main.py                     → everything
 ```
 
 ---

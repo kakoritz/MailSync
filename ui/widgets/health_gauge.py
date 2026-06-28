@@ -2,7 +2,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.label import Label
 from kivy.lang import Builder
-from kivy.properties import NumericProperty
+from kivy.properties import NumericProperty, ColorProperty
 
 from ui import theme
 
@@ -42,14 +42,15 @@ Builder.load_string("""
 
 class HealthGauge(BoxLayout):
     health_pct = NumericProperty(100)
+    gauge_color = ColorProperty(theme.STATUS_OK)
 
-    @property
-    def gauge_color(self):
-        if self.health_pct >= 90:
-            return theme.STATUS_OK
-        if self.health_pct >= 60:
-            return theme.STATUS_WARN
-        return theme.STATUS_ERROR
+    def on_health_pct(self, _instance, value: float) -> None:
+        if value >= 90:
+            self.gauge_color = theme.STATUS_OK
+        elif value >= 60:
+            self.gauge_color = theme.STATUS_WARN
+        else:
+            self.gauge_color = theme.STATUS_ERROR
 
     def update(self, pct: int) -> None:
         self.health_pct = max(0, min(100, pct))

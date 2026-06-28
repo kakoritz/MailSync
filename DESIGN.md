@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.1.0
+**Version:** v0.6.0
 
 ---
 
@@ -134,12 +134,31 @@ successfully migrated message.
 Yahoo account from the app. This is by design — it is the migration checkpoint
 and must survive app restarts, crashes, and OS kills.
 
-### 5.2 Idempotency
+### 5.2 Idempotency and the Initial Sync Fast Path
 
-Before writing each message to Outlook, the engine checks whether a message
-with the same `Message-ID` header already exists via Graph API filter query.
-If it does, the UID is advanced without writing. This makes re-running a
-failed sync safe — no duplicate messages are created.
+When `last_yahoo_uid == 0` at the start of a run (i.e., the first ever sync),
+the Outlook mailbox is guaranteed empty — no messages have ever been written.
+The per-message `message_exists()` check is skipped entirely for this run,
+saving N Graph API calls on large inboxes.
+
+For all subsequent runs (`last_yahoo_uid > 0`), before writing each message
+the engine checks whether a message with the same `Message-ID` header already
+exists via Graph API filter query. If it does, the UID is advanced without
+writing. This makes resuming a failed sync safe — no duplicate messages are
+created.
+
+The dedup strategy has three tiers:
+
+1. **Initial sync fast path** (`is_initial_sync`) — skip all existence checks
+   when `last_yahoo_uid == 0`. Outlook is guaranteed empty.
+2. **Per-run Message-ID cache** — a `set[str]` of Message-IDs written this run.
+   O(1) lookup; catches same-ID re-appearances within a single run without any
+   network call.
+3. **Graph API filter query** (`message_exists()`) — the fallback for messages
+   that might already exist in Outlook from a previous run.
+
+`SyncResult` tracks `emails_skipped` (tier 3 dedup) and `emails_cache_hit`
+(tier 2 cache) separately for observability.
 
 ### 5.3 Partial failure recovery
 
@@ -193,13 +212,54 @@ android.services = sync:service/sync_service.py
 
 The service:
 1. Calls `database.init()` independently (separate SQLite connection)
-2. Loops every `SYNC_INTERVAL_SECONDS` (3600)
-3. Loads accounts from the database and calls `run_sync()`
-4. Posts an Android notification if new emails were synced
-5. Communicates the sync count to the UI via OSC on localhost
+2. Runs `run_sync()` immediately on every iteration
+3. Opens an IMAP IDLE connection and waits for EXISTS push notification
+4. Falls back to the configured sync interval if IDLE does not fire
+5. Posts an Android notification if new emails were synced
+
+### 7.1 IMAP IDLE (RFC 2177)
+
+Rather than polling every N minutes, the service uses IMAP IDLE to receive
+push notifications from Yahoo's server when new mail arrives:
+
+```
+Service → Yahoo IMAP: A001 IDLE\r\n
+Yahoo IMAP → Service: + idling\r\n
+... new message arrives ...
+Yahoo IMAP → Service: * 5 EXISTS\r\n
+Service → Yahoo IMAP: DONE\r\n
+Yahoo IMAP → Service: A001 OK IDLE terminated\r\n
+Service: run_sync() immediately
+```
+
+The IDLE connection is held in `sync/imap_idle.py` (`IdleMonitor`). A 25-minute
+keepalive (DONE + re-IDLE) prevents the server from closing the connection before
+the configured sync interval elapses. On any connection error, the monitor
+reconnects with exponential backoff.
+
+### 7.2 BOOT_COMPLETED
+
+`src/BootReceiver.java` is compiled into the APK and registered in
+`AndroidManifest.xml` via `extras/boot_receiver.xml`. After device reboot,
+Android dispatches `ACTION_BOOT_COMPLETED` to the receiver, which starts
+`PythonService` as a foreground service.
 
 The `FOREGROUND_SERVICE` permission keeps the process alive when the app is
 backgrounded. `RECEIVE_BOOT_COMPLETED` restarts the service after device reboot.
+
+### 7.3 Notification Channels (Android 8+ / API 26+)
+
+`service/notification_helper.py` wraps the Android notification API:
+
+- `create_channel()` — creates the `mailsync_sync` channel with `IMPORTANCE_LOW`.
+  Called once at service startup. Idempotent — safe to call every restart.
+- `send_notification(title, body)` — posts through the channel. Uses a
+  time-based notification ID so back-to-back notifications don't overwrite each other.
+- `start_foreground(service_context)` — posts the persistent "MailSync active"
+  notification required by Android 9+ (API 28+) to keep a foreground service alive.
+  Must be called within 5 seconds of service start.
+
+On non-Android platforms (tests, desktop) every function is a no-op.
 
 ---
 
@@ -212,6 +272,8 @@ CREATE TABLE sync_state (
     yahoo_email     TEXT NOT NULL UNIQUE,
     outlook_email   TEXT NOT NULL,
     last_yahoo_uid  INTEGER NOT NULL DEFAULT 0,
+    pending_emails  INTEGER,   -- last dry-run count; NULL until first dry-run
+    idle_last_seen  TEXT,      -- UTC timestamp of last IDLE EXISTS push; NULL until first IDLE fire
     first_sync_at   TEXT,      -- set once, never updated
     last_sync_at    TEXT,
     created_at      TEXT NOT NULL
@@ -252,11 +314,13 @@ CREATE TABLE accounts (
 │  ● Outlook   user@ms.com     ✓ │
 ├─────────────────────────────────┤
 │         [ SYNC NOW ]            │
+│    [ Check Pending Emails ]     │
 ├─────────────────────────────────┤
 │  Syncing since     Jan 15, 2026 │
 │  Total synced          1,247    │
 │  Synced today             14    │
 │  Last sync          2 min ago   │
+│  Pending (est.)           12    │
 │  Health  ████████░░  82%        │
 ├─────────────────────────────────┤
 │  [ Open Outlook ↗ ]             │
@@ -280,12 +344,58 @@ HomeScreen
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | push to `development`, PR to `main` | `pytest tests/ -q` |
+| `ci.yml` | push to `development`, PR to `main` | Three parallel jobs: logic, e2e, ui |
 | `android.yml` | merge to `main`, manual dispatch | `buildozer android debug` → APK released |
 
-The CI job installs only `requests msal cryptography pytest` — Kivy is not
-installed in CI because it requires a display server. All UI code is excluded
-from the test suite by design.
+### CI job structure
+
+```
+test-logic  (fast, ~2 min)
+  └── installs: requests msal cryptography pytest
+  └── runs: pytest tests/ -q --ignore=tests/test_screens.py
+
+test-e2e    (starts dovecot/dovecot:latest via docker compose in a step after checkout)
+  └── needs: test-logic
+  └── runs: pytest tests/e2e/ -m e2e -q
+
+test-ui     (slow, ~10 min — Kivy compile or cache hit)
+  └── needs: test-logic
+  └── installs: kivy[base]>=2.3.0 (pip-cached by requirements hash)
+  └── runs: pytest tests/test_screens.py -q (hard gate — no || true)
+```
+
+`pip cache` is shared across runs using `actions/cache` keyed on `requirements*.txt` hash.
+
+## 11. E2E Testing
+
+Unit tests mock all external calls. E2E tests use a real Dovecot IMAP server in
+Docker to verify the actual IMAP stack end-to-end.
+
+```
+tests/e2e/
+  conftest.py              — e2e marker, skip guard, clear_inbox fixture
+  test_yahoo_imap_e2e.py   — fetch_uids_since + iter_new_messages against Dovecot
+  test_idle_e2e.py         — IdleMonitor callback fires on APPEND; stop() is clean
+  dovecot/
+    10-auth.conf           — plaintext auth, static password for test user
+    10-mail.conf           — maildir storage
+    10-ssl.conf            — SSL disabled (localhost test only)
+```
+
+E2E tests patch `auth.yahoo_auth.connect` to return a plain `IMAP4` connection
+to `localhost:143` instead of an SSL connection to Yahoo's servers. The IMAP
+protocol logic being tested is identical either way.
+
+Skip behaviour: if `localhost:143` is not reachable, all 9 e2e tests skip
+automatically. The unit test run (102 tests) is unaffected.
+
+**CI note:** the `test-e2e` job uses `docker compose` (Compose V2 plugin, not the
+standalone `docker-compose` v1 binary which is absent from ubuntu-22.04 runners).
+The server starts in a step *after* `actions/checkout` so the config volume files
+at `tests/e2e/dovecot/` are available before Dovecot starts.
+
+Skip behaviour: if `localhost:143` is not reachable, all 9 e2e tests skip
+automatically. The unit test run (102 tests) is unaffected.
 
 ---
 

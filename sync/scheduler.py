@@ -3,10 +3,12 @@ Platform-aware sync scheduler.
 
 On Android: the background service (service/sync_service.py) owns the timer.
 On desktop (dev/test): this module provides a threading-based scheduler.
+
+Fires the sync function immediately on start(), then every interval seconds.
+This ensures the first sync doesn't wait a full interval after launch.
 """
 
 import threading
-import time
 from typing import Callable
 
 from core.constants import SYNC_INTERVAL_SECONDS
@@ -30,13 +32,14 @@ class SyncScheduler:
         self._stop_event.set()
 
     def _loop(self) -> None:
-        while not self._stop_event.is_set():
-            self._stop_event.wait(self._interval)
-            if not self._stop_event.is_set():
-                try:
-                    self._sync_fn()
-                except Exception:
-                    pass
+        # Fire immediately on first run, then every interval
+        while True:
+            try:
+                self._sync_fn()
+            except Exception:
+                pass
+            if self._stop_event.wait(self._interval):
+                break
 
     @property
     def is_running(self) -> bool:

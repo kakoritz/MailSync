@@ -105,4 +105,54 @@ configured in `buildozer.spec` and `service/sync_service.py`.
 
 **401 from Graph API after a few days** — the access token expired and the
 refresh token path failed. Re-run the Device Code Flow via ConnectScreen.
-v0.2 will fix the MSAL token cache serialization to prevent this.
+
+---
+
+## BOOT_COMPLETED Auto-restart (Status: Implemented in v0.5)
+
+The `RECEIVE_BOOT_COMPLETED` permission is declared in `buildozer.spec`, and
+`src/BootReceiver.java` is compiled into the APK via `android.add_java_dir = src`.
+The manifest receiver registration is injected via `extras/boot_receiver.xml`
+and `android.extra_manifest_xml` (requires buildozer >= 1.3).
+
+### How it works
+
+1. Device reboots
+2. Android dispatches `ACTION_BOOT_COMPLETED` to `BootReceiver.onReceive()`
+3. `BootReceiver` starts `PythonService` as a foreground service
+4. The Python service entry point (`service/sync_service.py`) starts normally
+
+### Verify after build
+
+```bash
+# After installing APK on a device:
+adb shell dumpsys package org.kakoritz.mailsync | grep receiver
+# Should show: org.kakoritz.mailsync.BootReceiver
+
+# Simulate boot broadcast (requires adb root or dev options):
+adb shell am broadcast -a android.intent.action.BOOT_COMPLETED \
+  -n org.kakoritz.mailsync/org.kakoritz.mailsync.BootReceiver
+```
+
+### Known limitation
+
+Physical device required for BOOT_COMPLETED testing — most Android emulators
+suppress or delay the boot broadcast. If the service does not start after a
+simulated broadcast, check `adb logcat -s MailSyncBoot` for the receiver output.
+
+---
+
+## IMAP IDLE Push (v0.5)
+
+MailSync now uses IMAP IDLE (RFC 2177) instead of pure polling. The sync
+service opens a persistent IMAP connection and blocks until the Yahoo server
+pushes an EXISTS notification — typically within seconds of a message arriving.
+
+The configured sync interval (Settings screen) is still used as a **maximum
+wait time** (fallback poll). If the IDLE connection drops or the server does
+not push a notification, the service falls back to the interval timer.
+
+Battery impact: IMAP IDLE holds a TCP connection open but does not transmit
+data while idle. Combined with `FOREGROUND_SERVICE` + `WAKE_LOCK`, the device
+radio stays active but at much lower duty cycle than polling every hour (IMAP
+push avoids the cold-start radio wake on each poll cycle).

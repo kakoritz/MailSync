@@ -1,0 +1,9 @@
+services:
+  imap:
+    image: dovecot/dovecot:latest
+    ports:
+      - "143:143"
+    volumes:
+      - ./tests/e2e/dovecot:/etc/dovecot/conf.d:ro
+    environment:
+      - LOG_LEVEL=info
