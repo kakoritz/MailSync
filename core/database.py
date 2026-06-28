@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     outlook_email   TEXT NOT NULL,
     last_yahoo_uid  INTEGER NOT NULL DEFAULT 0,
     pending_emails  INTEGER,
+    idle_last_seen  TEXT,
     first_sync_at   TEXT,
     last_sync_at    TEXT,
     created_at      TEXT NOT NULL
@@ -37,9 +38,9 @@ CREATE TABLE IF NOT EXISTS sync_log (
 );
 """
 
-# Migration: add pending_emails column to existing databases that don't have it
 _MIGRATIONS = [
     "ALTER TABLE sync_state ADD COLUMN pending_emails INTEGER",
+    "ALTER TABLE sync_state ADD COLUMN idle_last_seen TEXT",
 ]
 
 
@@ -154,6 +155,30 @@ def update_pending_emails(yahoo_email: str, count: int) -> None:
             "UPDATE sync_state SET pending_emails = ? WHERE yahoo_email = ?",
             (count, yahoo_email),
         )
+
+
+def update_idle_last_seen(yahoo_email: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE sync_state SET idle_last_seen = ? WHERE yahoo_email = ?",
+            (_now(), yahoo_email),
+        )
+
+
+def get_sync_stats_by_day(sync_state_id: int, days: int = 7) -> list[dict]:
+    """Return emails_synced grouped by date for the last N days."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT DATE(started_at) AS date, COALESCE(SUM(emails_synced), 0) AS emails_synced
+               FROM sync_log
+               WHERE sync_state_id = ?
+                 AND started_at >= DATE('now', ? || ' days')
+                 AND status = 'success'
+               GROUP BY DATE(started_at)
+               ORDER BY date""",
+            (sync_state_id, f"-{days}"),
+        ).fetchall()
+        return [{"date": r["date"], "emails_synced": r["emails_synced"]} for r in rows]
 
 
 def get_sync_state(yahoo_email: str) -> sqlite3.Row | None:

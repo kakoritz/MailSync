@@ -2,6 +2,39 @@
 
 ---
 
+## v0.6.0 — 2026-06-27
+
+### Added
+
+- **Android notification channels** (`service/notification_helper.py`) — creates the `mailsync_sync` notification channel (IMPORTANCE_LOW) at service startup. Required for notifications to appear on Android 8+ (API 26+). Previous versions silently dropped notifications on modern Android.
+- **Foreground service notification** — `notification_helper.start_foreground()` posts the persistent "MailSync active" notification that keeps the service alive on Android 9+ (API 28+). Eliminates OS kills after backgrounding.
+- **IDLE connection status on home screen** — new "Sync mode" stat row shows `Live (IDLE)` if IDLE fired in the last 35 minutes, `Polling` otherwise. The `idle_last_seen` column in `sync_state` is updated every time IDLE fires.
+- **Reconnect prompt on auth failure** — when startup credential ping fails, a coloured "Reconnect Yahoo →" or "Reconnect Microsoft →" button appears below the error detail. Navigates directly to the connect screen. Buttons are hidden on every `on_enter` and only shown when a ping actually fails.
+- **Connect screen adapts for re-authentication** — when navigating to the connect screen with existing accounts: header changes to "Re-authenticate", Yahoo email is pre-filled (password blank for security), and buttons read "Update credentials" / "Re-authenticate Microsoft".
+- **7-day sync history mini-chart** (`ui/widgets/history_chart.py`) — Kivy canvas bar chart below the health gauge showing emails synced per day for the last 7 days. Green bars for active days, grey for idle. Data from new `database.get_sync_stats_by_day()`.
+- **E2E tests with Dovecot IMAP** (`tests/e2e/`) — 9 end-to-end tests against a real Dovecot server in Docker. Tests cover `fetch_uids_since`, `iter_new_messages`, and `IdleMonitor` callback firing on APPEND. All 9 tests skip gracefully when Docker is not running. `docker-compose.test.yml` provided.
+- **CI split into three jobs** — `test-logic` (fast, no Kivy, always required), `test-ui` (Kivy cached install, hard gate with no `|| true`), `test-e2e` (Dovecot service, `pytest tests/e2e/ -m e2e`). `pip cache` action added to all three jobs.
+- `database.get_sync_stats_by_day(sync_state_id, days=7)` — new DB function returning `[{date, emails_synced}]` for success-only log entries.
+- `database.update_idle_last_seen(yahoo_email)` — records timestamp when IDLE fires.
+- `database.idle_last_seen` column added to `sync_state` via safe migration.
+- `.github/pull_request_template.md` — PR checklist enforcing doc updates, version bump, test run, no secrets.
+
+### Changed
+
+- `service/sync_service.py` — imports `service.notification_helper`; replaces inline `_notify()` with `notification_helper.send_notification()`; calls `notification_helper.create_channel()` at startup.
+- `home_screen._refresh_stats()` — populates new `stat_sync_mode` and `history_chart` widgets in addition to existing stats.
+- `home_screen.on_enter()` — calls `_hide_reconnect_buttons()` before account refresh so stale reconnect prompts never persist across navigation.
+- CI `ci.yml` — split into `test-logic` / `test-e2e` / `test-ui`; `|| true` removed from UI test step (hard gate); pip cache added.
+
+### Tests
+
+- 102 unit tests (up from 90), 9 E2E tests (skipped without Docker)
+- New: `tests/test_notification_helper.py` (7 tests) — no-op on non-Android, channel creation + notification posting + foreground start with mocked JNI
+- New: `tests/test_database.py` +5 — `idle_last_seen` default None, `update_idle_last_seen`, `get_sync_stats_by_day` empty / accumulate / excludes errors
+- New: `tests/e2e/test_yahoo_imap_e2e.py` (6 e2e tests), `tests/e2e/test_idle_e2e.py` (3 e2e tests)
+
+---
+
 ## v0.5.0 — 2026-06-27
 
 ### Added

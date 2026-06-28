@@ -7,9 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-logic:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +18,87 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-logic-${{ runner.os }}-${{ hashFiles('requirements*.txt') }}
+          restore-keys: pip-logic-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install requests msal cryptography pytest
+
+      - name: Run business logic tests
+        run: pytest tests/ -q --ignore=tests/test_screens.py
+
+  test-e2e:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    needs: test-logic
+
+    services:
+      imap:
+        image: dovecot/dovecot:latest
+        ports:
+          - 143:143
+        volumes:
+          - ${{ github.workspace }}/tests/e2e/dovecot:/etc/dovecot/conf.d
+        options: >-
+          --health-cmd "nc -z localhost 143"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-e2e-${{ runner.os }}-${{ hashFiles('requirements*.txt') }}
+          restore-keys: pip-e2e-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pip install requests msal cryptography pytest
+
+      - name: Wait for IMAP server
+        run: |
+          for i in $(seq 1 20); do
+            nc -z localhost 143 && echo "IMAP ready" && break
+            sleep 2
+          done
+
+      - name: Run E2E tests
+        env:
+          MAILSYNC_CLIENT_ID: test-client-id
+        run: pytest tests/e2e/ -m e2e -q
+
+  test-ui:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    needs: test-logic
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-kivy-${{ runner.os }}-${{ hashFiles('requirements*.txt') }}
+          restore-keys: pip-kivy-${{ runner.os }}-
 
       - name: Install system dependencies for headless Kivy
         run: |
@@ -32,14 +113,10 @@ jobs:
           pip install "kivy[base]>=2.3.0" --no-binary kivy || \
             pip install "kivy[base]>=2.3.0"
 
-      - name: Run business logic tests
-        run: pytest tests/ -q --ignore=tests/test_screens.py
-
       - name: Run UI smoke tests (headless)
         env:
           SDL_VIDEODRIVER: offscreen
           SDL_AUDIODRIVER: dummy
           DISPLAY: ""
           MAILSYNC_CLIENT_ID: test-client-id
-        run: |
-          pytest tests/test_screens.py -q || true
+        run: pytest tests/test_screens.py -q

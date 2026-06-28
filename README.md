@@ -14,8 +14,9 @@ forwarding when migrating to a new email provider.
 - Reads new emails from Yahoo, writes them to your Outlook Inbox
 - Runs in the background with **IMAP IDLE push** — new mail triggers a sync within seconds, not an hour
 - Tracks the last synced email permanently — picks up exactly where it left off
-- Shows stats: total synced, today's count, health percentage, last sync time
-- Validates your stored credentials on every launch — alerts you before the first sync if credentials have gone stale
+- Shows stats: total synced, today's count, health percentage, last sync time, sync mode (Live IDLE / Polling)
+- 7-day sync history bar chart — visual at-a-glance view of your migration progress
+- Validates your stored credentials on every launch — shows a "Reconnect →" button if credentials have gone stale
 - Check Pending Emails (dry-run) shows how many emails are waiting before you commit a full sync
 - Lets you launch the Outlook app directly from within MailSync
 
@@ -62,13 +63,14 @@ and sideload it to your device. See [DEPLOYMENT.md](DEPLOYMENT.md) for full inst
 | Sync mode | On-demand (SYNC NOW) + IMAP IDLE push (near-realtime) + interval fallback |
 | Sync tracking | UID-based, persistent — survives restarts and crashes |
 | Idempotent | Re-running never creates duplicates (Message-ID dedup; initial sync fast path) |
-| Stats | Total synced, today, since-date, pending estimate, health % (30-day) |
-| Startup validation | Credentials pinged on every launch; stale creds surface immediately |
+| Stats | Total synced, today, since-date, pending estimate, health % (30-day), sync mode |
+| History chart | 7-day bar chart of emails synced per day |
+| Startup validation | Credentials pinged on every launch; Reconnect button shown on failure |
 | Check Pending | Dry-run count of waiting emails with no side effects |
 | Sync interval | Configurable: 15 min / 30 min / 1 hr / 2 hr / 6 hr from Settings |
 | Open Outlook | One tap to switch to the Outlook app |
 | Security | All credentials Fernet-encrypted with device-bound key derivation |
-| Notifications | Android notification when new emails are synced |
+| Notifications | Android notification channel (API 26+); foreground service notification (API 28+) |
 
 ---
 
@@ -92,13 +94,13 @@ and sideload it to your device. See [DEPLOYMENT.md](DEPLOYMENT.md) for full inst
 
 ```
 main.py               App bootstrap
-service/              Android background service
+service/              Android background service + notification helper
 core/                 Constants, config, database, state machine
 auth/                 Yahoo + Microsoft auth, encrypted token store
-sync/                 Yahoo reader, Outlook writer, sync engine, scheduler
-ui/                   Kivy screens and reusable widgets
+sync/                 Yahoo reader, Outlook writer, sync engine, scheduler, IMAP IDLE
+ui/                   Kivy screens and reusable widgets (incl. history chart)
 security/             Key derivation and Fernet encryption
-tests/                pytest suite (83 business-logic + 7 UI smoke tests)
+tests/                102 unit tests + 9 E2E tests (Dovecot Docker)
 ```
 
 ---
@@ -118,9 +120,15 @@ buildozer android debug
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/ -q
+pytest tests/ -q                          # unit tests (no Docker needed)
+pytest tests/e2e/ -m e2e -q              # E2E tests (requires Docker)
 # or use the convenience script:
 ./scripts/test.sh
+```
+
+To run E2E tests, start the Dovecot test server first:
+```bash
+docker-compose -f docker-compose.test.yml up -d
 ```
 
 ---
@@ -148,7 +156,9 @@ MailSync is a real solution to a real problem. It demonstrates:
 - Android background service integration from Python (Kivy service layer)
 - Clean six-layer architecture with enforced dependency direction
 - Idempotent sync design — safe to re-run at any point
-- 90+ unit tests covering all business logic with fully mocked external dependencies
+- 102 unit tests + 9 E2E tests; all network calls mocked in unit tests; E2E uses real Dovecot IMAP in Docker
 - Three-tier dedup strategy: initial skip → per-run cache → API query; eliminates virtually all redundant Graph API calls
 - IMAP IDLE push via raw socket (RFC 2177) — new mail triggers sync within seconds
 - BOOT_COMPLETED BroadcastReceiver in Java — service restarts automatically after reboot
+- Android 8+ notification channels and Android 9+ foreground service notification — notifications actually work on modern Android
+- Reconnect prompt surfaces immediately when credentials go stale — connects to correct re-auth flow with pre-filled email

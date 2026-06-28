@@ -2,7 +2,7 @@
 
 **Project:** MailSync
 **Repo:** [github.com/kakoritz/MailSync](https://github.com/kakoritz/MailSync)
-**Version:** v0.5.0
+**Version:** v0.6.0
 
 ---
 
@@ -247,6 +247,20 @@ Android dispatches `ACTION_BOOT_COMPLETED` to the receiver, which starts
 The `FOREGROUND_SERVICE` permission keeps the process alive when the app is
 backgrounded. `RECEIVE_BOOT_COMPLETED` restarts the service after device reboot.
 
+### 7.3 Notification Channels (Android 8+ / API 26+)
+
+`service/notification_helper.py` wraps the Android notification API:
+
+- `create_channel()` — creates the `mailsync_sync` channel with `IMPORTANCE_LOW`.
+  Called once at service startup. Idempotent — safe to call every restart.
+- `send_notification(title, body)` — posts through the channel. Uses a
+  time-based notification ID so back-to-back notifications don't overwrite each other.
+- `start_foreground(service_context)` — posts the persistent "MailSync active"
+  notification required by Android 9+ (API 28+) to keep a foreground service alive.
+  Must be called within 5 seconds of service start.
+
+On non-Android platforms (tests, desktop) every function is a no-op.
+
 ---
 
 ## 8. Database Schema
@@ -259,6 +273,7 @@ CREATE TABLE sync_state (
     outlook_email   TEXT NOT NULL,
     last_yahoo_uid  INTEGER NOT NULL DEFAULT 0,
     pending_emails  INTEGER,   -- last dry-run count; NULL until first dry-run
+    idle_last_seen  TEXT,      -- UTC timestamp of last IDLE EXISTS push; NULL until first IDLE fire
     first_sync_at   TEXT,      -- set once, never updated
     last_sync_at    TEXT,
     created_at      TEXT NOT NULL
@@ -329,12 +344,50 @@ HomeScreen
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | push to `development`, PR to `main` | `pytest tests/ -q` |
+| `ci.yml` | push to `development`, PR to `main` | Three parallel jobs: logic, e2e, ui |
 | `android.yml` | merge to `main`, manual dispatch | `buildozer android debug` → APK released |
 
-The CI job installs only `requests msal cryptography pytest` — Kivy is not
-installed in CI because it requires a display server. All UI code is excluded
-from the test suite by design.
+### CI job structure
+
+```
+test-logic  (fast, ~2 min)
+  └── installs: requests msal cryptography pytest
+  └── runs: pytest tests/ -q --ignore=tests/test_screens.py
+
+test-e2e    (requires Docker service: dovecot/dovecot:latest on port 143)
+  └── needs: test-logic
+  └── runs: pytest tests/e2e/ -m e2e -q
+
+test-ui     (slow, ~10 min — Kivy compile or cache hit)
+  └── needs: test-logic
+  └── installs: kivy[base]>=2.3.0 (pip-cached by requirements hash)
+  └── runs: pytest tests/test_screens.py -q (hard gate — no || true)
+```
+
+`pip cache` is shared across runs using `actions/cache` keyed on `requirements*.txt` hash.
+
+## 11. E2E Testing
+
+Unit tests mock all external calls. E2E tests use a real Dovecot IMAP server in
+Docker to verify the actual IMAP stack end-to-end.
+
+```
+tests/e2e/
+  conftest.py              — e2e marker, skip guard, clear_inbox fixture
+  test_yahoo_imap_e2e.py   — fetch_uids_since + iter_new_messages against Dovecot
+  test_idle_e2e.py         — IdleMonitor callback fires on APPEND; stop() is clean
+  dovecot/
+    10-auth.conf           — plaintext auth, static password for test user
+    10-mail.conf           — maildir storage
+    10-ssl.conf            — SSL disabled (localhost test only)
+```
+
+E2E tests patch `auth.yahoo_auth.connect` to return a plain `IMAP4` connection
+to `localhost:143` instead of an SSL connection to Yahoo's servers. The IMAP
+protocol logic being tested is identical either way.
+
+Skip behaviour: if `localhost:143` is not reachable, all 9 e2e tests skip
+automatically. The unit test run (102 tests) is unaffected.
 
 ---
 

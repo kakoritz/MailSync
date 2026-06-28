@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import database, config
 from core.constants import SYNC_INTERVAL_SECONDS
+from service import notification_helper
 from sync.sync_engine import run_sync
 
 _stop_event = threading.Event()
@@ -37,14 +38,6 @@ def _handle_sigterm(_signum, _frame) -> None:
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
-def _notify(title: str, message: str) -> None:
-    try:
-        from android.notifications import notify
-        notify(title, message)
-    except Exception:
-        pass
-
-
 def _get_interval() -> int:
     return config.get("sync_interval_seconds") or SYNC_INTERVAL_SECONDS
 
@@ -53,11 +46,13 @@ def _do_sync(yahoo_email: str, outlook_email: str) -> None:
     try:
         result = run_sync(yahoo_email, outlook_email)
         if result.emails_synced > 0:
-            _notify("MailSync", f"Synced {result.emails_synced} new email(s) from Yahoo.")
+            notification_helper.send_notification(
+                "MailSync", f"Synced {result.emails_synced} new email(s) from Yahoo."
+            )
         if result.status == "error" and result.errors:
-            _notify("MailSync — Sync Error", result.errors[0])
+            notification_helper.send_notification("MailSync — Sync Error", result.errors[0])
     except Exception as exc:
-        _notify("MailSync — Error", str(exc)[:120])
+        notification_helper.send_notification("MailSync — Error", str(exc)[:120])
 
 
 def _wait_for_new_mail(yahoo_email: str) -> None:
@@ -67,6 +62,7 @@ def _wait_for_new_mail(yahoo_email: str) -> None:
     new_mail_event = threading.Event()
 
     def on_new_mail():
+        database.update_idle_last_seen(yahoo_email)
         new_mail_event.set()
 
     monitor = IdleMonitor(yahoo_email, on_new_mail=on_new_mail)
@@ -82,6 +78,7 @@ def _wait_for_new_mail(yahoo_email: str) -> None:
 
 
 def main() -> None:
+    notification_helper.create_channel()
     database.init()
 
     while not _stop_event.is_set():

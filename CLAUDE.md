@@ -42,7 +42,8 @@ Version format: `v0.MAJOR.MINOR` — bump MINOR for any visible change.
 ```
 main.py                 App bootstrap + ScreenManager
 service/
-  sync_service.py       Android background service (hourly sync)
+  sync_service.py           Android background service (IDLE push + interval fallback)
+  notification_helper.py    Android 8+ notification channels + foreground service notification
 core/
   constants.py          App-wide constants — no logic
   config.py             JSON settings persistence
@@ -64,8 +65,8 @@ sync/
 ui/
   theme.py              All colors, font sizes, spacing — single source of truth
   screens/
-    home_screen.py      Dashboard: account cards, SYNC + Check Pending, stats, error detail
-    connect_screen.py   Yahoo + Microsoft connection flows
+    home_screen.py      Dashboard: account cards, SYNC + Check Pending, stats, reconnect btns
+    connect_screen.py   Yahoo + Microsoft connection flows; adapts for re-auth
     history_screen.py   Sync log table
     settings_screen.py  Disconnect (with confirm popup), configurable interval, history nav
   widgets/
@@ -73,6 +74,7 @@ ui/
     sync_button.py      Animated SYNC NOW button
     stat_row.py         Label + value row for stats panel
     health_gauge.py     Progress bar health indicator
+    history_chart.py    7-day sync bar chart (Kivy canvas)
     open_outlook_btn.py Android Intent launcher (BooleanProperty android_available)
 scripts/
   test.sh               Run pytest
@@ -87,6 +89,11 @@ tests/
   test_scheduler.py
   test_credential_validator.py
   test_imap_idle.py
+  test_notification_helper.py
+  e2e/
+    conftest.py              e2e marker + Dovecot skip guard
+    test_yahoo_imap_e2e.py   real IMAP CRUD against Dovecot
+    test_idle_e2e.py         IDLE callback fires on APPEND
 ```
 
 ## Dependency Rule
@@ -103,6 +110,7 @@ yahoo_reader.py             → yahoo_auth
 outlook_writer.py           → microsoft_auth, constants
 sync_engine.py              → yahoo_reader, outlook_writer, database
 scheduler.py                → constants (no sync imports at module level)
+notification_helper.py      → nothing (android/jnius are runtime-optional try/except)
 ui/                         → core, sync, auth (never the reverse)
 main.py                     → everything
 ```

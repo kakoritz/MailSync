@@ -19,6 +19,7 @@ from kivy.lang import Builder
 from auth.yahoo_auth import validate_credentials, YahooAuthError
 from auth.microsoft_auth import initiate_device_flow, poll_device_flow
 from auth.token_store import save_yahoo_credentials
+from core import database
 from ui import theme
 
 Builder.load_string("""
@@ -39,6 +40,31 @@ class ConnectScreen(Screen):
         self._device_flow = None
         self._build_ui()
 
+    def on_enter(self) -> None:
+        yahoo_rows = database.get_accounts_by_service("yahoo")
+        ms_rows = database.get_accounts_by_service("microsoft")
+
+        has_yahoo = bool(yahoo_rows)
+        has_ms = bool(ms_rows)
+
+        if has_yahoo or has_ms:
+            self._header_lbl.text = "Re-authenticate"
+        else:
+            self._header_lbl.text = "Connect Accounts"
+
+        if has_yahoo:
+            self.yahoo_email_input.text = yahoo_rows[0]["email"]
+            self._yahoo_btn.text = "Update credentials"
+        else:
+            self.yahoo_email_input.text = ""
+            self._yahoo_btn.text = "Connect Yahoo"
+        self.yahoo_pw_input.text = ""
+
+        if has_ms:
+            self._ms_btn.text = "Re-authenticate Microsoft"
+        else:
+            self._ms_btn.text = "Connect Microsoft Account"
+
     def _build_ui(self) -> None:
         root = BoxLayout(orientation="vertical", padding="20dp", spacing="16dp")
 
@@ -51,12 +77,13 @@ class ConnectScreen(Screen):
         back_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "home"))
         root.add_widget(back_btn)
 
-        root.add_widget(Label(
+        self._header_lbl = Label(
             text="Connect Accounts",
             font_size="22sp", bold=True,
             color=theme.TEXT_PRIMARY,
             size_hint_y=None, height="40dp",
-        ))
+        )
+        root.add_widget(self._header_lbl)
 
         # --- Yahoo section ---
         root.add_widget(self._section_label("Yahoo Mail"))
@@ -72,12 +99,13 @@ class ConnectScreen(Screen):
             multiline=False,
             size_hint_y=None, height="44dp",
         )
-        yahoo_btn = Button(
+        self._yahoo_btn = Button(
             text="Connect Yahoo",
             size_hint_y=None, height="48dp",
             background_color=theme.ACCENT,
         )
-        yahoo_btn.bind(on_release=self._on_yahoo_connect)
+        self._yahoo_btn.bind(on_release=self._on_yahoo_connect)
+        yahoo_btn = self._yahoo_btn
 
         self.yahoo_status = Label(
             text="",
@@ -92,13 +120,13 @@ class ConnectScreen(Screen):
         # --- Microsoft section ---
         root.add_widget(self._section_label("Microsoft Outlook 365"))
 
-        ms_btn = Button(
+        self._ms_btn = Button(
             text="Connect Microsoft Account",
             size_hint_y=None, height="48dp",
             background_color=(0.0, 0.47, 0.83, 1),
         )
-        ms_btn.bind(on_release=self._on_ms_connect)
-        root.add_widget(ms_btn)
+        self._ms_btn.bind(on_release=self._on_ms_connect)
+        root.add_widget(self._ms_btn)
 
         self.ms_code_label = Label(
             text="",

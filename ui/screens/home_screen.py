@@ -30,6 +30,7 @@ from ui.widgets.account_card import AccountCard
 from ui.widgets.sync_button import SyncButton
 from ui.widgets.stat_row import StatRow
 from ui.widgets.health_gauge import HealthGauge
+from ui.widgets.history_chart import HistoryChart
 from ui.widgets.open_outlook_btn import OpenOutlookButton
 from ui import theme
 
@@ -111,12 +112,37 @@ class HomeScreen(Screen):
         )
         root.add_widget(self.detail_lbl)
 
+        # Reconnect buttons — hidden until auth ping fails
+        self._yahoo_reconnect_btn = Button(
+            text="Reconnect Yahoo →",
+            font_size="13sp",
+            background_color=theme.STATUS_ERROR,
+            color=(1, 1, 1, 1),
+            size_hint_y=None,
+            height="0dp",
+            opacity=0,
+        )
+        self._yahoo_reconnect_btn.bind(on_release=lambda *_: self._go("connect"))
+        root.add_widget(self._yahoo_reconnect_btn)
+
+        self._ms_reconnect_btn = Button(
+            text="Reconnect Microsoft →",
+            font_size="13sp",
+            background_color=theme.STATUS_ERROR,
+            color=(1, 1, 1, 1),
+            size_hint_y=None,
+            height="0dp",
+            opacity=0,
+        )
+        self._ms_reconnect_btn.bind(on_release=lambda *_: self._go("connect"))
+        root.add_widget(self._ms_reconnect_btn)
+
         # Stats panel
         stats_box = BoxLayout(
             orientation="vertical",
             spacing="6dp",
             size_hint_y=None,
-            height="200dp",
+            height="320dp",
             padding=("0dp", "8dp"),
         )
         self.stat_since = StatRow(label="Syncing since")
@@ -124,10 +150,13 @@ class HomeScreen(Screen):
         self.stat_today = StatRow(label="Synced today")
         self.stat_last = StatRow(label="Last sync")
         self.stat_pending = StatRow(label="Pending (est.)")
+        self.stat_sync_mode = StatRow(label="Sync mode")
         self.health_gauge = HealthGauge()
+        self.history_chart = HistoryChart()
 
         for w in (self.stat_since, self.stat_total, self.stat_today,
-                  self.stat_last, self.stat_pending, self.health_gauge):
+                  self.stat_last, self.stat_pending, self.stat_sync_mode,
+                  self.health_gauge, self.history_chart):
             stats_box.add_widget(w)
         root.add_widget(stats_box)
 
@@ -149,6 +178,7 @@ class HomeScreen(Screen):
 
     def on_enter(self) -> None:
         self._active = True
+        self._hide_reconnect_buttons()
         self._refresh_accounts()
         self._refresh_stats()
         if self._yahoo_email or self._outlook_email:
@@ -198,20 +228,23 @@ class HomeScreen(Screen):
         if not result.valid:
             self.yahoo_card.set_error("Auth failed")
             self._show_detail(f"Yahoo: {result.error}")
+            self._show_reconnect_btn(self._yahoo_reconnect_btn)
 
     def _apply_ms_validity(self, result) -> None:
         if not result.valid:
             self.outlook_card.set_error("Auth failed")
             self._show_detail(f"Microsoft: {result.error}")
+            self._show_reconnect_btn(self._ms_reconnect_btn)
 
     # --- stats ---
 
     def _refresh_stats(self) -> None:
         if not (self._yahoo_email and self._outlook_email):
             for stat in (self.stat_since, self.stat_total, self.stat_today,
-                         self.stat_last, self.stat_pending):
+                         self.stat_last, self.stat_pending, self.stat_sync_mode):
                 stat.value = "—"
             self.health_gauge.update(100)
+            self.history_chart.update([])
             return
 
         state = database.get_sync_state(self._yahoo_email)
@@ -244,6 +277,9 @@ class HomeScreen(Screen):
 
         self.health_gauge.update(stats["health_pct"])
 
+        chart_data = database.get_sync_stats_by_day(state["id"])
+        self.history_chart.update(chart_data)
+
         pending = state["pending_emails"]
         if pending is None:
             self.stat_pending.value = "—"
@@ -251,6 +287,18 @@ class HomeScreen(Screen):
             self.stat_pending.value = "Up to date"
         else:
             self.stat_pending.value = str(pending)
+
+        idle_last = state["idle_last_seen"]
+        if idle_last:
+            try:
+                idle_dt = datetime.fromisoformat(idle_last)
+                age_secs = (datetime.now(timezone.utc) - idle_dt).total_seconds()
+                # IDLE is considered healthy if it fired within the last 35 minutes
+                self.stat_sync_mode.value = "Live (IDLE)" if age_secs < 2100 else "Polling"
+            except Exception:
+                self.stat_sync_mode.value = "Polling"
+        else:
+            self.stat_sync_mode.value = "Polling"
 
         # Warn if last sync was >50 days ago — Microsoft refresh tokens expire at 90 days
         last = state["last_sync_at"]
@@ -355,6 +403,15 @@ class HomeScreen(Screen):
         self._show_detail(msg)
 
     # --- helpers ---
+
+    def _show_reconnect_btn(self, btn: Button) -> None:
+        btn.height = "44dp"
+        btn.opacity = 1
+
+    def _hide_reconnect_buttons(self) -> None:
+        for btn in (self._yahoo_reconnect_btn, self._ms_reconnect_btn):
+            btn.height = "0dp"
+            btn.opacity = 0
 
     def _show_detail(self, msg: str, color=None) -> None:
         self.detail_lbl.color = color or theme.STATUS_ERROR

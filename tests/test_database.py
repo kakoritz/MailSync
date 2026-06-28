@@ -138,3 +138,50 @@ def test_update_pending_emails_to_zero():
     database.update_pending_emails("a@yahoo.com", 0)
     state = database.get_sync_state("a@yahoo.com")
     assert state["pending_emails"] == 0
+
+
+def test_idle_last_seen_default_is_none():
+    state = database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    assert state["idle_last_seen"] is None
+
+
+def test_update_idle_last_seen():
+    database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    database.update_idle_last_seen("a@yahoo.com")
+    state = database.get_sync_state("a@yahoo.com")
+    assert state["idle_last_seen"] is not None
+    # Should be a valid ISO timestamp
+    from datetime import datetime
+    dt = datetime.fromisoformat(state["idle_last_seen"])
+    assert dt is not None
+
+
+def test_get_sync_stats_by_day_empty():
+    state = database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    rows = database.get_sync_stats_by_day(state["id"])
+    assert isinstance(rows, list)
+    assert rows == []
+
+
+def test_get_sync_stats_by_day_accumulates():
+    state = database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    log_id = database.start_sync_log(state["id"])
+    database.finish_sync_log(log_id, 7, "success")
+    log_id = database.start_sync_log(state["id"])
+    database.finish_sync_log(log_id, 3, "success")
+
+    rows = database.get_sync_stats_by_day(state["id"])
+    assert len(rows) == 1
+    assert rows[0]["emails_synced"] == 10
+
+
+def test_get_sync_stats_by_day_excludes_errors():
+    state = database.get_or_create_sync_state("a@yahoo.com", "b@outlook.com")
+    log_id = database.start_sync_log(state["id"])
+    database.finish_sync_log(log_id, 5, "success")
+    log_id = database.start_sync_log(state["id"])
+    database.finish_sync_log(log_id, 0, "error", "timeout")
+
+    rows = database.get_sync_stats_by_day(state["id"])
+    assert len(rows) == 1
+    assert rows[0]["emails_synced"] == 5
